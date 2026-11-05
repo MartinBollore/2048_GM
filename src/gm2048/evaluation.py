@@ -124,7 +124,7 @@ def evaluate(agent: Agent, n_games: int, first_seed: int = 0) -> EvaluationRepor
         raise ValueError("Le nombre de partie ne peut pas être nul")
 
     results = []
-    for i in range(1, n_games+1):
+    for i in range(1, n_games + 1):
         seed = first_seed + i - 1
         results.append(play_game(agent=agent, seed=seed))
 

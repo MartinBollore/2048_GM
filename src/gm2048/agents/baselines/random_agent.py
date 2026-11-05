@@ -11,6 +11,8 @@ exactement ce qui est attendu : lis-les avant de commencer.
 
 from __future__ import annotations
 
+import numpy as np
+
 from gm2048.engine import Action, ActionMask, Board
 
 
@@ -27,7 +29,7 @@ class RandomAgent:
         exactement les mêmes coups.
         """
         # TODO : crée le générateur aléatoire et garde-le dans un attribut.
-        raise NotImplementedError
+        self.rng = np.random.default_rng(seed)
 
     def act(self, board: Board, legal_mask: ActionMask) -> Action:
         """Renvoie un coup légal tiré au hasard.
@@ -44,4 +46,11 @@ class RandomAgent:
         # 2. S'il n'y en a aucun, lève une ValueError avec un message clair.
         # 3. Tires-en un au hasard avec le générateur de l'agent.
         # 4. Renvoie-le sous forme d'Action.
-        raise NotImplementedError
+
+        idx_legal_moves = [i for i, x in enumerate(legal_mask) if x]
+        if len(idx_legal_moves) == 0:
+            raise ValueError("Aucun coup légal disponible")
+
+        move = self.rng.choice(idx_legal_moves)
+
+        return Action(int(move))

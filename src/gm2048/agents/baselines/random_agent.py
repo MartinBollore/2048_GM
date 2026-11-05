@@ -28,7 +28,7 @@ class RandomAgent:
         ``seed`` : deux agents créés avec la même graine doivent jouer
         exactement les mêmes coups.
         """
-        # TODO : crée le générateur aléatoire et garde-le dans un attribut.
+
         self.rng = np.random.default_rng(seed)
 
     def act(self, board: Board, legal_mask: ActionMask) -> Action:
@@ -41,11 +41,6 @@ class RandomAgent:
 
         Lève ``ValueError`` si aucun coup n'est légal.
         """
-        # TODO :
-        # 1. Récupère les numéros des coups légaux.
-        # 2. S'il n'y en a aucun, lève une ValueError avec un message clair.
-        # 3. Tires-en un au hasard avec le générateur de l'agent.
-        # 4. Renvoie-le sous forme d'Action.
 
         idx_legal_moves = [i for i, x in enumerate(legal_mask) if x]
         if len(idx_legal_moves) == 0:

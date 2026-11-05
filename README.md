@@ -38,6 +38,14 @@ Le jeu lit les touches une par une dans un vrai terminal (terminal Windows, ongl
 Dans la console d'exécution de PyCharm, qui n'est pas un vrai terminal, il passe automatiquement en
 saisie ligne par ligne : taper la touche puis Entrée. L'option `--line` force ce mode.
 
+## Évaluer un agent
+
+```bash
+gm2048 eval --agent random --games 1000   # 1 000 parties, graines 0 à 999
+```
+
+Affiche le score moyen, la part des parties atteignant 2048 et la répartition des tuiles max.
+
 ## Tests et qualité
 
 ```bash
@@ -58,6 +66,9 @@ src/gm2048/
 │   ├── board.py   # plateau d'exposants, glissement, fusions, coups légaux, apparition
 │   ├── game.py    # Game : une partie avec score, hasard reproductible et fin de partie
 │   └── render.py  # affichage texte
+├── agents/        # le contrat Agent et les agents
+│   └── baselines/ # agents de référence, sans apprentissage (aléatoire, …)
+├── evaluation.py  # faire jouer un agent sur N parties et mesurer ses résultats
 └── cli.py         # commande gm2048
 tests/             # même découpage que src/
 ```

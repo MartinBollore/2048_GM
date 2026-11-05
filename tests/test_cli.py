@@ -107,3 +107,20 @@ def test_cli_play_ends_cleanly_on_end_of_input() -> None:
     result = CliRunner().invoke(app, ["play", "--seed", "1"], input="")
     assert result.exit_code == 0, result.output
     assert "Partie abandonnée" in result.output
+
+
+def test_cli_eval_prints_a_report() -> None:
+    result = CliRunner().invoke(app, ["eval", "--agent", "random", "--games", "3", "--seed", "0"])
+    assert result.exit_code == 0, result.output
+    assert "random" in result.output
+    assert "3 parties" in result.output
+
+
+def test_cli_eval_rejects_an_unknown_agent() -> None:
+    result = CliRunner().invoke(app, ["eval", "--agent", "inconnu"])
+    assert result.exit_code != 0
+
+
+def test_cli_eval_rejects_zero_games() -> None:
+    result = CliRunner().invoke(app, ["eval", "--games", "0"])
+    assert result.exit_code != 0

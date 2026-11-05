@@ -9,7 +9,16 @@ from typing import Annotated, Final, Literal
 
 import typer
 
+from gm2048.agents import Agent
+from gm2048.agents.baselines import RandomAgent
 from gm2048.engine import Action, Game, render
+from gm2048.evaluation import evaluate, format_report
+
+AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
+    "random": RandomAgent,
+}
+"""Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
+à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval``."""
 
 app = typer.Typer(
     help="2048 GM : moteur de jeu 2048 et IA capable d'y jouer.",
@@ -138,3 +147,19 @@ def play(
         echo=typer.echo,
         clear=_no_clear if line_mode else _clear_screen,
     )
+
+
+@app.command("eval")
+def eval_(
+    agent: Annotated[str, typer.Option(help=f"Agent à évaluer : {', '.join(AGENTS)}.")] = "random",
+    games: Annotated[int, typer.Option(min=1, help="Nombre de parties à jouer.")] = 100,
+    seed: Annotated[int, typer.Option(help="Graine de la première partie (et de l'agent).")] = 0,
+) -> None:
+    """Faire jouer un agent sur une série de parties et afficher ses résultats."""
+    if agent not in AGENTS:
+        raise typer.BadParameter(
+            f"agent inconnu {agent!r}. Choix possibles : {', '.join(AGENTS)}.",
+            param_hint="--agent",
+        )
+    report = evaluate(AGENTS[agent](seed), n_games=games, first_seed=seed)
+    typer.echo(format_report(report))

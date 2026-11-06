@@ -10,12 +10,13 @@ from typing import Annotated, Final, Literal
 import typer
 
 from gm2048.agents import Agent
-from gm2048.agents.baselines import RandomAgent
+from gm2048.agents.baselines import GreedyAgent, RandomAgent
 from gm2048.engine import Action, Game, render
 from gm2048.evaluation import evaluate, format_report
 
 AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
     "random": RandomAgent,
+    "greedy": GreedyAgent,
 }
 """Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
 à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval``."""

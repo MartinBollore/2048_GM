@@ -45,6 +45,9 @@ gm2048 eval --agent random --games 1000   # 1 000 parties, graines 0 à 999
 ```
 
 Affiche le score moyen, la part des parties atteignant 2048 et la répartition des tuiles max.
+Pendant l'évaluation, une barre de progression indique l'avancement, le temps restant estimé,
+le score moyen et la meilleure tuile obtenus jusque-là. Elle s'écrit sur la sortie d'erreur :
+`gm2048 eval > rapport.txt` n'enregistre que le rapport.
 
 ## Tests et qualité
 

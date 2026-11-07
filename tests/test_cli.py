@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from gm2048 import cli
-from gm2048.agents.baselines import GreedyAgent, HeuristicAgent
-from gm2048.cli import QUIT, app, parse_key, play_loop, progress_info
+from gm2048.agents import Agent
+from gm2048.agents.baselines import ExpectimaxAgent, GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.cli import QUIT, agent_factory, app, parse_key, play_loop, progress_info
 from gm2048.engine import Action, Game, from_values
-from gm2048.evaluation import GameResult
+from gm2048.evaluation import EvaluationReport, GameResult
 
 
 @pytest.mark.parametrize(
@@ -183,6 +186,29 @@ def test_cli_rejects_bad_window_options(arguments: list[str], fake_window: FakeW
     assert fake_window.calls == []
 
 
+def test_cli_watch_passes_the_depth_to_the_agent(fake_window: FakeWindow) -> None:
+    result = CliRunner().invoke(app, ["watch", "--agent", "expectimax", "--depth", "1"])
+    assert result.exit_code == 0, result.output
+    make_agent = fake_window.calls[0][1]["make_agent"]
+    assert callable(make_agent)
+    agent = make_agent(0)
+    assert isinstance(agent, ExpectimaxAgent)
+    assert agent.depth == 1
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["watch", "--agent", "greedy", "--depth", "2"],
+        ["watch", "--agent", "expectimax", "--depth", "0"],
+    ],
+)
+def test_cli_watch_rejects_a_bad_depth(arguments: list[str], fake_window: FakeWindow) -> None:
+    result = CliRunner().invoke(app, arguments)
+    assert result.exit_code != 0
+    assert fake_window.calls == []
+
+
 def test_cli_watch_explains_how_to_install_pygame(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_gui_available", lambda: False)
     result = CliRunner().invoke(app, ["watch"])
@@ -224,3 +250,50 @@ def test_progress_info_shows_mean_score_and_best_tile() -> None:
         GameResult(seed=1, score=300, max_tile=256, moves=20),
     ]
     assert progress_info(played) == "score moyen 200, meilleure tuile 256"
+
+
+def test_agent_factory_without_depth_keeps_the_default_agent() -> None:
+    agent = agent_factory("expectimax")(0)
+    assert isinstance(agent, ExpectimaxAgent)
+    assert agent.depth == ExpectimaxAgent(0).depth
+
+
+def test_agent_factory_passes_the_depth() -> None:
+    agent = agent_factory("expectimax", depth=1)(0)
+    assert isinstance(agent, ExpectimaxAgent)
+    assert agent.depth == 1
+
+
+def test_agent_factory_refuses_a_depth_for_agents_without_search() -> None:
+    with pytest.raises(typer.BadParameter):
+        agent_factory("random", depth=2)
+
+
+def test_cli_eval_passes_the_depth_to_the_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # On remplace evaluate par une version qui ne joue qu'une partie de l'agent aléatoire,
+    # mais retient l'agent reçu : le test reste rapide.
+    received: list[Agent] = []
+    real_evaluate = cli.evaluate
+
+    def spy(agent: Agent, *args: Any, **kwargs: Any) -> EvaluationReport:
+        received.append(agent)
+        return real_evaluate(RandomAgent(0), *args, **kwargs)
+
+    monkeypatch.setattr(cli, "evaluate", spy)
+    result = CliRunner().invoke(
+        app, ["eval", "--agent", "expectimax", "--depth", "1", "--games", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    assert isinstance(received[0], ExpectimaxAgent)
+    assert received[0].depth == 1
+    assert "Profondeur de recherche : 1" in result.stdout
+
+
+def test_cli_eval_rejects_a_depth_for_agents_without_search() -> None:
+    result = CliRunner().invoke(app, ["eval", "--agent", "random", "--depth", "2"])
+    assert result.exit_code != 0
+
+
+def test_cli_eval_rejects_a_depth_of_zero() -> None:
+    result = CliRunner().invoke(app, ["eval", "--agent", "expectimax", "--depth", "0"])
+    assert result.exit_code != 0

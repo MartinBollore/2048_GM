@@ -56,6 +56,7 @@ Sans pygame-ce, `gm2048 play` se rabat sur le terminal.
 gm2048 watch                                  # l'agent heuristique, un coup toutes les 0,2 s
 gm2048 watch --agent greedy --delay 0.5       # un autre agent, plus lentement
 gm2048 watch --seed 42                        # la première partie de `gm2048 eval --seed 42`
+gm2048 watch --agent expectimax --depth 1     # profondeur de recherche choisie
 ```
 
 Les tuiles glissent, fusionnent et apparaissent avec des animations, dont la durée s'adapte au délai
@@ -78,6 +79,7 @@ exemple) ne fige pas la fenêtre, et « réflexion… » s'affiche s'il fait att
 
 ```bash
 gm2048 eval --agent random --games 1000   # 1 000 parties, graines 0 à 999
+gm2048 eval --agent expectimax --depth 1 --games 20   # profondeur de recherche choisie
 ```
 
 Affiche le score moyen, la part des parties atteignant 2048 et la répartition des tuiles max.

@@ -11,7 +11,7 @@ from typing import Annotated, Final, Literal
 import typer
 
 from gm2048.agents import Agent
-from gm2048.agents.baselines import GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.agents.baselines import ExpectimaxAgent, GreedyAgent, HeuristicAgent, RandomAgent
 from gm2048.engine import Action, Game, render
 from gm2048.evaluation import GameResult, evaluate, format_report
 from gm2048.gui.theme import THEMES
@@ -20,10 +20,36 @@ AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
     "random": RandomAgent,
     "greedy": GreedyAgent,
     "heuristic": HeuristicAgent,
+    "expectimax": ExpectimaxAgent,
 }
 """Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
 à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval`` et
 ``gm2048 watch``."""
+
+DEPTH_AGENTS: Final[dict[str, Callable[[int | None, int], Agent]]] = {
+    "expectimax": lambda seed, depth: ExpectimaxAgent(seed, depth=depth),
+}
+"""Les agents qui acceptent une profondeur de recherche (option ``--depth``) :
+nom → fonction qui crée l'agent à partir d'une graine et d'une profondeur."""
+
+
+def agent_factory(name: str, depth: int | None = None) -> Callable[[int | None], Agent]:
+    """Fonction qui crée l'agent ``name`` à partir d'une graine.
+
+    Sans ``depth``, l'agent garde ses réglages par défaut. Avec ``depth``, l'agent
+    doit faire partie de :data:`DEPTH_AGENTS`, sinon ``typer.BadParameter`` est levée.
+    """
+    if depth is None:
+        return AGENTS[name]
+    if name not in DEPTH_AGENTS:
+        raise typer.BadParameter(
+            f"l'agent {name!r} n'a pas de profondeur de recherche. "
+            f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
+            param_hint="--depth",
+        )
+    make = DEPTH_AGENTS[name]
+    return lambda seed: make(seed, depth)
+
 
 app = typer.Typer(
     help="2048 GM : moteur de jeu 2048 et IA capable d'y jouer.",
@@ -142,6 +168,15 @@ ThemeOption = Annotated[
     str, typer.Option(help=f"Thème de la fenêtre : {', '.join(THEME_NAMES)} (touche T).")
 ]
 
+DepthOption = Annotated[
+    int | None,
+    typer.Option(
+        min=1,
+        help=f"Profondeur de recherche ({', '.join(DEPTH_AGENTS)} seulement). "
+        "Par défaut, celle de l'agent.",
+    ),
+]
+
 
 def _check_theme(theme: str) -> None:
     if theme not in THEME_NAMES:
@@ -213,16 +248,18 @@ def watch(
         float, typer.Option(min=0.0, help="Secondes entre deux coups (touches + et - en direct).")
     ] = 0.2,
     theme: ThemeOption = "clair",
+    depth: DepthOption = None,
 ) -> None:
     """Regarder un agent jouer, dans une fenêtre animée."""
     _check_agent(agent)
     _check_theme(theme)
+    make_agent = agent_factory(agent, depth)
     if not _gui_available():
         typer.echo(GUI_MISSING, err=True)
         raise typer.Exit(code=1)
     from gm2048.gui import window
 
-    window.watch(AGENTS[agent], seed=seed, delay=delay, theme=theme)
+    window.watch(make_agent, seed=seed, delay=delay, theme=theme)
 
 
 @app.command("eval")
@@ -230,9 +267,12 @@ def eval_(
     agent: Annotated[str, typer.Option(help=f"Agent à évaluer : {', '.join(AGENTS)}.")] = "random",
     games: Annotated[int, typer.Option(min=1, help="Nombre de parties à jouer.")] = 100,
     seed: Annotated[int, typer.Option(help="Graine de la première partie (et de l'agent).")] = 0,
+    depth: DepthOption = None,
 ) -> None:
     """Faire jouer un agent sur une série de parties et afficher ses résultats."""
     _check_agent(agent)
+    make_agent = agent_factory(agent, depth)
+    label = f"Évaluation de {agent}" + ("" if depth is None else f" (profondeur {depth})")
     played: list[GameResult] = []
 
     def show_info(_: GameResult | None) -> str | None:
@@ -242,7 +282,7 @@ def eval_(
     # que le rapport, qu'on peut donc rediriger dans un fichier sans la barre.
     with typer.progressbar(
         length=games,
-        label=f"Évaluation de {agent}",
+        label=label,
         show_pos=True,
         item_show_func=show_info,
         file=sys.stderr,
@@ -254,8 +294,10 @@ def eval_(
             bar.update(1)
 
         report = evaluate(
-            AGENTS[agent](seed), n_games=games, first_seed=seed, on_game_done=on_game_done
+            make_agent(seed), n_games=games, first_seed=seed, on_game_done=on_game_done
         )
+    if depth is not None:
+        typer.echo(f"Profondeur de recherche : {depth}")
     typer.echo(format_report(report))
 
 

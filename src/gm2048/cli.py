@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import sys
 from collections.abc import Callable, Sequence
@@ -13,6 +14,7 @@ from gm2048.agents import Agent
 from gm2048.agents.baselines import GreedyAgent, HeuristicAgent, RandomAgent
 from gm2048.engine import Action, Game, render
 from gm2048.evaluation import GameResult, evaluate, format_report
+from gm2048.gui.theme import THEMES
 
 AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
     "random": RandomAgent,
@@ -20,7 +22,8 @@ AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
     "heuristic": HeuristicAgent,
 }
 """Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
-à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval``."""
+à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval`` et
+``gm2048 watch``."""
 
 app = typer.Typer(
     help="2048 GM : moteur de jeu 2048 et IA capable d'y jouer.",
@@ -128,20 +131,67 @@ def main() -> None:
     """2048 GM : moteur de jeu 2048 et IA capable d'y jouer."""
 
 
+GUI_MISSING = (
+    'La fenêtre graphique a besoin de pygame-ce. Pour l\'installer :\n    pip install -e ".[gui]"'
+)
+
+THEME_NAMES: Final = tuple(THEMES)
+"""Les thèmes de la fenêtre."""
+
+ThemeOption = Annotated[
+    str, typer.Option(help=f"Thème de la fenêtre : {', '.join(THEME_NAMES)} (touche T).")
+]
+
+
+def _check_theme(theme: str) -> None:
+    if theme not in THEME_NAMES:
+        raise typer.BadParameter(
+            f"thème inconnu {theme!r}. Choix possibles : {', '.join(THEME_NAMES)}.",
+            param_hint="--theme",
+        )
+
+
+def _check_agent(agent: str) -> None:
+    if agent not in AGENTS:
+        raise typer.BadParameter(
+            f"agent inconnu {agent!r}. Choix possibles : {', '.join(AGENTS)}.",
+            param_hint="--agent",
+        )
+
+
+def _gui_available() -> bool:
+    """Vrai si pygame est installé (sans l'importer)."""
+    return importlib.util.find_spec("pygame") is not None
+
+
 @app.command()
 def play(
     seed: Annotated[
         int | None, typer.Option(help="Graine du hasard, pour rejouer la même partie.")
     ] = None,
+    terminal: Annotated[
+        bool,
+        typer.Option("--terminal", help="Jouer dans le terminal plutôt que dans une fenêtre."),
+    ] = False,
     line: Annotated[
         bool,
         typer.Option(
             "--line",
-            help="Saisie ligne par ligne (touche puis Entrée). Automatique hors d'un terminal.",
+            help="Dans le terminal, saisie ligne par ligne (touche puis Entrée). "
+            "Automatique hors d'un vrai terminal.",
         ),
     ] = False,
+    theme: ThemeOption = "clair",
 ) -> None:
-    """Jouer une partie au clavier dans le terminal."""
+    """Jouer une partie au clavier, dans une fenêtre animée (ou dans le terminal)."""
+    _check_theme(theme)
+    if not (terminal or line):
+        if _gui_available():
+            from gm2048.gui import window
+
+            window.play(seed=seed, theme=theme)
+            return
+        typer.echo(f"{GUI_MISSING}\nEn attendant, la partie se joue dans le terminal.", err=True)
     line_mode = line or not sys.stdin.isatty()
     play_loop(
         Game(seed=seed),
@@ -151,6 +201,30 @@ def play(
     )
 
 
+@app.command()
+def watch(
+    agent: Annotated[str, typer.Option(help=f"Agent à regarder : {', '.join(AGENTS)}.")] = (
+        "heuristic"
+    ),
+    seed: Annotated[
+        int, typer.Option(help="Graine de la première partie (les suivantes : +1, +2, …).")
+    ] = 0,
+    delay: Annotated[
+        float, typer.Option(min=0.0, help="Secondes entre deux coups (touches + et - en direct).")
+    ] = 0.2,
+    theme: ThemeOption = "clair",
+) -> None:
+    """Regarder un agent jouer, dans une fenêtre animée."""
+    _check_agent(agent)
+    _check_theme(theme)
+    if not _gui_available():
+        typer.echo(GUI_MISSING, err=True)
+        raise typer.Exit(code=1)
+    from gm2048.gui import window
+
+    window.watch(AGENTS[agent], seed=seed, delay=delay, theme=theme)
+
+
 @app.command("eval")
 def eval_(
     agent: Annotated[str, typer.Option(help=f"Agent à évaluer : {', '.join(AGENTS)}.")] = "random",
@@ -158,11 +232,7 @@ def eval_(
     seed: Annotated[int, typer.Option(help="Graine de la première partie (et de l'agent).")] = 0,
 ) -> None:
     """Faire jouer un agent sur une série de parties et afficher ses résultats."""
-    if agent not in AGENTS:
-        raise typer.BadParameter(
-            f"agent inconnu {agent!r}. Choix possibles : {', '.join(AGENTS)}.",
-            param_hint="--agent",
-        )
+    _check_agent(agent)
     played: list[GameResult] = []
 
     def show_info(_: GameResult | None) -> str | None:

@@ -7,6 +7,8 @@ from collections.abc import Iterator
 import pytest
 from typer.testing import CliRunner
 
+from gm2048 import cli
+from gm2048.agents.baselines import GreedyAgent, HeuristicAgent
 from gm2048.cli import QUIT, app, parse_key, play_loop, progress_info
 from gm2048.engine import Action, Game, from_values
 from gm2048.evaluation import GameResult
@@ -98,16 +100,94 @@ def test_play_loop_quits_on_ctrl_c() -> None:
 
 
 def test_cli_play_in_line_mode() -> None:
-    result = CliRunner().invoke(app, ["play", "--seed", "1"], input="z\nq\ns\nd\nx\n")
+    result = CliRunner().invoke(app, ["play", "--terminal", "--seed", "1"], input="z\nq\ns\nd\nx\n")
     assert result.exit_code == 0, result.output
     assert "Score : " in result.output
     assert "Partie abandonnée" in result.output
 
 
 def test_cli_play_ends_cleanly_on_end_of_input() -> None:
-    result = CliRunner().invoke(app, ["play", "--seed", "1"], input="")
+    result = CliRunner().invoke(app, ["play", "--line", "--seed", "1"], input="")
     assert result.exit_code == 0, result.output
     assert "Partie abandonnée" in result.output
+
+
+class FakeWindow:
+    """Remplace la fenêtre pygame : enregistre les appels sans rien ouvrir."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def play(self, **options: object) -> None:
+        self.calls.append(("play", options))
+
+    def watch(self, make_agent: object, **options: object) -> None:
+        self.calls.append(("watch", {"make_agent": make_agent, **options}))
+
+
+@pytest.fixture
+def fake_window(monkeypatch: pytest.MonkeyPatch) -> FakeWindow:
+    pytest.importorskip("pygame")
+    from gm2048.gui import window
+
+    fake = FakeWindow()
+    monkeypatch.setattr(window, "play", fake.play)
+    monkeypatch.setattr(window, "watch", fake.watch)
+    return fake
+
+
+def test_cli_play_opens_the_window_by_default(fake_window: FakeWindow) -> None:
+    result = CliRunner().invoke(app, ["play", "--seed", "4", "--theme", "sombre"])
+    assert result.exit_code == 0, result.output
+    assert fake_window.calls == [("play", {"seed": 4, "theme": "sombre"})]
+
+
+def test_cli_play_falls_back_to_the_terminal_without_pygame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(cli, "_gui_available", lambda: False)
+    result = CliRunner().invoke(app, ["play", "--seed", "1"], input="x\n")
+    assert result.exit_code == 0, result.output
+    assert "pygame-ce" in result.output
+    assert "Partie abandonnée" in result.output
+
+
+def test_cli_watch_opens_the_window_with_the_agent(fake_window: FakeWindow) -> None:
+    result = CliRunner().invoke(
+        app, ["watch", "--agent", "greedy", "--seed", "3", "--delay", "0.5"]
+    )
+    assert result.exit_code == 0, result.output
+    assert fake_window.calls == [
+        ("watch", {"make_agent": GreedyAgent, "seed": 3, "delay": 0.5, "theme": "clair"})
+    ]
+
+
+def test_cli_watch_uses_the_heuristic_agent_by_default(fake_window: FakeWindow) -> None:
+    result = CliRunner().invoke(app, ["watch"])
+    assert result.exit_code == 0, result.output
+    assert fake_window.calls[0][1]["make_agent"] is HeuristicAgent
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["watch", "--agent", "inconnu"],
+        ["watch", "--theme", "fluo"],
+        ["watch", "--delay", "-1"],
+        ["play", "--theme", "fluo"],
+    ],
+)
+def test_cli_rejects_bad_window_options(arguments: list[str], fake_window: FakeWindow) -> None:
+    result = CliRunner().invoke(app, arguments)
+    assert result.exit_code != 0
+    assert fake_window.calls == []
+
+
+def test_cli_watch_explains_how_to_install_pygame(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli, "_gui_available", lambda: False)
+    result = CliRunner().invoke(app, ["watch"])
+    assert result.exit_code == 1
+    assert 'pip install -e ".[gui]"' in result.output
 
 
 def test_cli_eval_prints_a_report() -> None:

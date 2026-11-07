@@ -25,18 +25,54 @@ Puis installer le projet avec ses outils de développement :
 pip install -e ".[dev]"
 ```
 
+Cela installe aussi [pygame-ce](https://pyga.me/), qui sert à la fenêtre graphique. Pour installer
+seulement le jeu et sa fenêtre, sans les outils de développement : `pip install -e ".[gui]"`.
+
 ## Jouer
 
 ```bash
-gm2048 play              # nouvelle partie
-gm2048 play --seed 42    # partie reproductible
+gm2048 play                   # nouvelle partie, dans une fenêtre animée
+gm2048 play --seed 42         # partie reproductible
+gm2048 play --theme sombre    # thème sombre (la touche T change de thème en cours de partie)
 ```
 
-Commandes : flèches, ZQSD (AZERTY) ou WASD (QWERTY) ; `x` ou Échap pour quitter.
+Commandes : flèches, ZQSD (AZERTY) ou WASD (QWERTY) ; `R` ou Entrée pour une nouvelle partie ;
+`T` pour changer de thème ; `x` ou Échap pour quitter. La fenêtre se redimensionne à volonté.
 
-Le jeu lit les touches une par une dans un vrai terminal (terminal Windows, onglet *Terminal* de PyCharm).
-Dans la console d'exécution de PyCharm, qui n'est pas un vrai terminal, il passe automatiquement en
-saisie ligne par ligne : taper la touche puis Entrée. L'option `--line` force ce mode.
+### Dans le terminal
+
+```bash
+gm2048 play --terminal
+```
+
+Le jeu lit alors les touches une par une dans un vrai terminal (terminal Windows, onglet *Terminal* de
+PyCharm). Dans la console d'exécution de PyCharm, qui n'est pas un vrai terminal, il passe
+automatiquement en saisie ligne par ligne : taper la touche puis Entrée. L'option `--line` force ce mode.
+Sans pygame-ce, `gm2048 play` se rabat sur le terminal.
+
+## Regarder un agent jouer
+
+```bash
+gm2048 watch                                  # l'agent heuristique, un coup toutes les 0,2 s
+gm2048 watch --agent greedy --delay 0.5       # un autre agent, plus lentement
+gm2048 watch --seed 42                        # la première partie de `gm2048 eval --seed 42`
+```
+
+Les tuiles glissent, fusionnent et apparaissent avec des animations, dont la durée s'adapte au délai
+entre deux coups. Au-dessus du plateau : l'agent, le numéro de la partie, sa graine, le nombre de coups,
+le délai et une flèche qui montre le dernier coup joué.
+
+| Touche | Effet |
+| --- | --- |
+| Espace | pause / reprise |
+| → (ou N) | en pause : jouer un seul coup ; en pleine partie : mettre en pause |
+| + / - | accélérer / ralentir (de 0 à 2 s entre deux coups) |
+| Entrée ou R | partie suivante (graine suivante) |
+| T | thème clair / sombre |
+| Échap ou X | quitter |
+
+L'agent choisit son coup dans un fil d'exécution à part : un agent lent (un expectimax profond, par
+exemple) ne fige pas la fenêtre, et « réflexion… » s'affiche s'il fait attendre la partie.
 
 ## Évaluer un agent
 
@@ -72,6 +108,13 @@ src/gm2048/
 ├── agents/        # le contrat Agent et les agents
 │   └── baselines/ # agents de référence, sans apprentissage (aléatoire, …)
 ├── evaluation.py  # faire jouer un agent sur N parties et mesurer ses résultats
+├── gui/           # fenêtre graphique (pygame-ce), pour jouer ou regarder un agent
+│   ├── motion.py      # trajet de chaque tuile pendant un coup
+│   ├── session.py     # animations dans le temps, score, fin de partie
+│   ├── controllers.py # qui joue et quand : humain au clavier ou agent à son rythme
+│   ├── theme.py       # couleurs des thèmes clair et sombre
+│   ├── layout.py      # géométrie de la fenêtre
+│   └── window.py      # dessin et clavier (le seul module qui importe pygame)
 └── cli.py         # commande gm2048
 tests/             # même découpage que src/
 ```

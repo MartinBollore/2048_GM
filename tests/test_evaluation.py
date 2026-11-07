@@ -107,6 +107,12 @@ def test_evaluate_uses_play_game_for_each_seed() -> None:
     assert report.results == tuple(play_game(agent, seed) for seed in range(20, 24))
 
 
+def test_evaluate_calls_on_game_done_after_each_game() -> None:
+    received: list[GameResult] = []
+    report = evaluate(FirstLegalAgent(), n_games=3, first_seed=5, on_game_done=received.append)
+    assert tuple(received) == report.results
+
+
 @pytest.mark.parametrize("n_games", [0, -1])
 def test_evaluate_refuses_less_than_one_game(n_games: int) -> None:
     with pytest.raises(ValueError):

@@ -17,6 +17,7 @@ lance ``pytest tests/test_evaluation.py``. Ordre conseillé : ``play_game``,
 from __future__ import annotations
 
 import collections
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from gm2048.agents import Agent
@@ -111,11 +112,21 @@ def play_game(agent: Agent, seed: int) -> GameResult:
     return game_result
 
 
-def evaluate(agent: Agent, n_games: int, first_seed: int = 0) -> EvaluationReport:
+def evaluate(
+    agent: Agent,
+    n_games: int,
+    first_seed: int = 0,
+    on_game_done: Callable[[GameResult], None] | None = None,
+) -> EvaluationReport:
     """Fait jouer ``n_games`` parties à ``agent``, avec les graines
     ``first_seed``, ``first_seed + 1``, …, ``first_seed + n_games - 1``.
 
     Le même objet agent joue toutes les parties, les unes après les autres.
+
+    Si ``on_game_done`` est fourni, il est appelé avec le :class:`GameResult` de
+    chaque partie dès qu'elle se termine. C'est ce qui permet à la ligne de
+    commande d'afficher une barre de progression, sans que ce module ait à
+    savoir quoi que ce soit de l'affichage.
 
     Lève ``ValueError`` si ``n_games`` est inférieur à 1.
     """
@@ -126,7 +137,10 @@ def evaluate(agent: Agent, n_games: int, first_seed: int = 0) -> EvaluationRepor
     results = []
     for i in range(1, n_games + 1):
         seed = first_seed + i - 1
-        results.append(play_game(agent=agent, seed=seed))
+        result = play_game(agent=agent, seed=seed)
+        results.append(result)
+        if on_game_done is not None:
+            on_game_done(result)
 
     evaluation_report = EvaluationReport(agent_name=agent.name, results=tuple(results))
 

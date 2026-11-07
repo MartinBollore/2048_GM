@@ -7,8 +7,9 @@ from collections.abc import Iterator
 import pytest
 from typer.testing import CliRunner
 
-from gm2048.cli import QUIT, app, parse_key, play_loop
+from gm2048.cli import QUIT, app, parse_key, play_loop, progress_info
 from gm2048.engine import Action, Game, from_values
+from gm2048.evaluation import GameResult
 
 
 @pytest.mark.parametrize(
@@ -124,3 +125,22 @@ def test_cli_eval_rejects_an_unknown_agent() -> None:
 def test_cli_eval_rejects_zero_games() -> None:
     result = CliRunner().invoke(app, ["eval", "--games", "0"])
     assert result.exit_code != 0
+
+
+def test_cli_eval_keeps_the_progress_bar_out_of_the_report() -> None:
+    result = CliRunner().invoke(app, ["eval", "--games", "3"])
+    assert result.exit_code == 0, result.output
+    assert "Évaluation de random" not in result.stdout
+    assert "Score moyen" in result.stdout
+
+
+def test_progress_info_is_empty_before_the_first_game() -> None:
+    assert progress_info([]) is None
+
+
+def test_progress_info_shows_mean_score_and_best_tile() -> None:
+    played = [
+        GameResult(seed=0, score=100, max_tile=128, moves=10),
+        GameResult(seed=1, score=300, max_tile=256, moves=20),
+    ]
+    assert progress_info(played) == "score moyen 200, meilleure tuile 256"

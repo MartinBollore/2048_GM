@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Annotated, Final, Literal
 
 import typer
 
 from gm2048.agents import Agent
-from gm2048.agents.baselines import GreedyAgent, RandomAgent
+from gm2048.agents.baselines import GreedyAgent, HeuristicAgent, RandomAgent
 from gm2048.engine import Action, Game, render
-from gm2048.evaluation import evaluate, format_report
+from gm2048.evaluation import GameResult, evaluate, format_report
 
 AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
     "random": RandomAgent,
     "greedy": GreedyAgent,
+    "heuristic": HeuristicAgent,
 }
 """Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
 à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval``."""
@@ -162,5 +163,36 @@ def eval_(
             f"agent inconnu {agent!r}. Choix possibles : {', '.join(AGENTS)}.",
             param_hint="--agent",
         )
-    report = evaluate(AGENTS[agent](seed), n_games=games, first_seed=seed)
+    played: list[GameResult] = []
+
+    def show_info(_: GameResult | None) -> str | None:
+        return progress_info(played)
+
+    # La barre s'écrit sur la sortie d'erreur : la sortie standard ne contient
+    # que le rapport, qu'on peut donc rediriger dans un fichier sans la barre.
+    with typer.progressbar(
+        length=games,
+        label=f"Évaluation de {agent}",
+        show_pos=True,
+        item_show_func=show_info,
+        file=sys.stderr,
+    ) as bar:
+
+        def on_game_done(result: GameResult) -> None:
+            played.append(result)
+            bar.current_item = result  # déclenche le rafraîchissement de progress_info
+            bar.update(1)
+
+        report = evaluate(
+            AGENTS[agent](seed), n_games=games, first_seed=seed, on_game_done=on_game_done
+        )
     typer.echo(format_report(report))
+
+
+def progress_info(played: Sequence[GameResult]) -> str | None:
+    """Texte affiché à droite de la barre : score moyen et meilleure tuile jusqu'ici."""
+    if not played:
+        return None
+    mean = sum(result.score for result in played) / len(played)
+    best = max(result.max_tile for result in played)
+    return f"score moyen {mean:.0f}, meilleure tuile {best}"

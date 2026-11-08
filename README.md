@@ -82,10 +82,22 @@ gm2048 eval --agent random --games 1000   # 1 000 parties, graines 0 à 999
 gm2048 eval --agent expectimax --depth 1 --games 20   # profondeur de recherche choisie
 ```
 
-Affiche le score moyen, la part des parties atteignant 2048 et la répartition des tuiles max.
+Affiche le score moyen, le score médian, le meilleur score, la part des parties atteignant 2048 et la répartition des tuiles max.
 Pendant l'évaluation, une barre de progression indique l'avancement, le temps restant estimé,
-le score moyen et la meilleure tuile obtenus jusque-là. Elle s'écrit sur la sortie d'erreur :
+le score moyen, le meilleur score et la meilleure tuile obtenus jusque-là. Elle s'écrit sur la sortie d'erreur :
 `gm2048 eval > rapport.txt` n'enregistre que le rapport.
+
+## Benchmark
+
+Profondeur de recherche : 1
+
+| Agent | Parties | Score moyen | Score médian | Score max | ≥ 512 | ≥ 1024 | ≥ 2048 | ≥ 4096 | ms par coup |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| random | 10 | 1576 | 1514 | 2976 | 0.0% | 0.0% | 0.0% | 0.0% | 0.63 |
+| greedy | 10 | 2074 | 2240 | 3108 | 0.0% | 0.0% | 0.0% | 0.0% | 0.77 |
+| heuristic | 10 | 13130 | 12016 | 33820 | 90.0% | 60.0% | 10.0% | 0.0% | 1.09 |
+| expectimax | 10 | 15887 | 16046 | 18808 | 100.0% | 100.0% | 0.0% | 0.0% | 4.81 |
+
 
 ## Tests et qualité
 

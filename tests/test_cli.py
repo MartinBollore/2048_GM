@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -245,12 +246,12 @@ def test_progress_info_is_empty_before_the_first_game() -> None:
     assert progress_info([]) is None
 
 
-def test_progress_info_shows_mean_score_and_best_tile() -> None:
+def test_progress_info_shows_mean_score_best_score_and_best_tile() -> None:
     played = [
         GameResult(seed=0, score=100, max_tile=128, moves=10),
         GameResult(seed=1, score=300, max_tile=256, moves=20),
     ]
-    assert progress_info(played) == "score moyen 200, meilleure tuile 256"
+    assert progress_info(played) == "score moyen 200, meilleur score 300, meilleure tuile 256"
 
 
 def test_agent_factory_without_depth_keeps_the_default_agent() -> None:
@@ -414,3 +415,43 @@ def test_markdown_table_is_what_the_benchmark_prints() -> None:
     expected = markdown_table(run_benchmark(["random", "greedy"], 2))
     printed = [line.rsplit("|", 2)[0] for line in result.stdout.strip().splitlines()]
     assert printed == [line.rsplit("|", 2)[0] for line in expected.splitlines()]
+
+
+def test_cli_benchmark_prints_the_table_even_when_the_output_is_not_utf8() -> None:
+    # Sous Windows, ``gm2048 benchmark > fichier`` écrit par défaut en cp1252, qui ne
+    # connaît pas « ≥ » : le tableau final plantait après toutes les parties.
+    result = CliRunner(charset="cp1252").invoke(app, BENCH)
+    assert result.exit_code == 0, result.output
+    assert "≥ 2048".encode() in result.stdout_bytes
+
+
+def test_cli_benchmark_writes_the_table_in_utf8_with_output(tmp_path: Path) -> None:
+    target = tmp_path / "benchmark.md"
+    result = CliRunner().invoke(app, [*BENCH, "--output", str(target)])
+    assert result.exit_code == 0, result.output
+    assert result.stdout == ""
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("| Agent | Parties | Score moyen | Score médian | Score max | ≥ 512 |")
+    assert list(table_rows(text)) == ["random", "greedy"]
+
+
+def test_cli_benchmark_checks_the_output_folder_before_playing(tmp_path: Path) -> None:
+    missing = tmp_path / "absent" / "benchmark.md"
+    result = CliRunner().invoke(app, [*BENCH, "--output", str(missing)])
+    assert result.exit_code == 2, result.output
+
+
+def test_cli_benchmark_leaves_a_blank_line_between_the_depth_and_the_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_benchmark(*args: Any, **kwargs: Any) -> list[EvaluationReport]:
+        return [evaluate(RandomAgent(seed=0), 1)]
+
+    monkeypatch.setattr(cli, "run_benchmark", fake_benchmark)
+    result = CliRunner().invoke(
+        app, ["benchmark", "--agent", "expectimax", "--depth", "1", "--games", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[:3] == ["Profondeur de recherche : 1", "", lines[2]]
+    assert lines[2].startswith("| Agent |")

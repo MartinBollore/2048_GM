@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Annotated, Final, Literal
 
 import typer
@@ -32,7 +34,7 @@ def agent_factory(name: str, depth: int | None = None) -> Callable[[int | None],
             f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
             param_hint="--depth",
         )
-    AGENTS[name]
+
     return lambda seed: make_agent(name, seed, depth)
 
 
@@ -179,6 +181,18 @@ def _check_agent(agent: str) -> None:
         )
 
 
+def _use_utf8_stdout() -> None:
+    """Fait écrire la sortie standard en UTF-8.
+
+    Sous Windows, quand la sortie est redirigée vers un fichier
+    (``gm2048 benchmark > benchmark.md``), Python l'encode par défaut en cp1252,
+    qui ne connaît pas certains caractères comme « ≥ » : l'affichage final
+    planterait, après des heures de calcul. On le règle donc dès le début.
+    """
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
 def _gui_available() -> bool:
     """Vrai si pygame est installé (sans l'importer)."""
     return importlib.util.find_spec("pygame") is not None
@@ -287,12 +301,14 @@ def eval_(
 
 
 def progress_info(played: Sequence[GameResult]) -> str | None:
-    """Texte affiché à droite de la barre : score moyen et meilleure tuile jusqu'ici."""
+    """Texte affiché à droite de la barre : score moyen, meilleur score et meilleure
+    tuile jusqu'ici."""
     if not played:
         return None
     mean = sum(result.score for result in played) / len(played)
-    best = max(result.max_tile for result in played)
-    return f"score moyen {mean:.0f}, meilleure tuile {best}"
+    best_score = max(result.score for result in played)
+    best_tile = max(result.max_tile for result in played)
+    return f"score moyen {mean:.0f}, meilleur score {best_score}, meilleure tuile {best_tile}"
 
 
 @app.command()
@@ -307,6 +323,14 @@ def benchmark(
     games: Annotated[int, typer.Option(min=1, help="Nombre de parties par agent.")] = 100,
     seed: Annotated[int, typer.Option(help="Graine de la première partie (et des agents).")] = 0,
     depth: DepthOption = None,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            dir_okay=False,
+            help="Fichier où écrire le tableau (en UTF-8), au lieu de l'afficher. "
+            "Plus sûr que la redirection > sous PowerShell, qui abîme les accents.",
+        ),
+    ] = None,
 ) -> None:
     """Comparer plusieurs agents sur les mêmes parties et afficher un tableau Markdown.
 
@@ -326,6 +350,7 @@ def benchmark(
     Attention au temps : expectimax à profondeur 2 met plus d'une minute et demie par
     partie. Pour 1 000 parties, ``--depth 1`` est plus raisonnable.
     """
+    _use_utf8_stdout()
     if agent is None:
         agent = list(AGENTS)
 
@@ -337,6 +362,11 @@ def benchmark(
             "aucun des agents choisis n'a de profondeur de recherche. "
             f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
             param_hint="--depth",
+        )
+    if output is not None and not output.parent.is_dir():
+        # Vérifié avant de jouer : on ne découvre pas une faute de frappe après des heures.
+        raise typer.BadParameter(
+            f"le dossier {str(output.parent)!r} n'existe pas.", param_hint="--output"
         )
 
     label = "Benchmark" + ("" if depth is None else f" (profondeur {depth})")
@@ -368,6 +398,13 @@ def benchmark(
             on_game_done=on_game_done,
         )
 
+    text = markdown_table(evaluation_reports)
     if depth is not None:
-        typer.echo(f"Profondeur de recherche : {depth}")
-    typer.echo(markdown_table(evaluation_reports))
+        # La ligne vide est indispensable : collé à une ligne de texte, un tableau
+        # Markdown n'est pas reconnu et s'affiche comme un seul paragraphe.
+        text = f"Profondeur de recherche : {depth}\n\n{text}"
+    if output is None:
+        typer.echo(text)
+    else:
+        output.write_text(text + "\n", encoding="utf-8")
+        typer.echo(f"Tableau écrit dans {output}", err=True)

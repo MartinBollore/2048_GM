@@ -65,7 +65,7 @@ def make_agent(name: str, seed: int | None = None, depth: int | None = None) -> 
 
     if name not in AGENTS:
         raise ValueError(
-            "L'agent " + name + " n'existe pas. Les agents disponible sont : , ".join(AGENTS)
+            f"L'agent {name!r} n'existe pas. Les agents disponibles sont : {', '.join(AGENTS)}."
         )
 
     if depth is None:
@@ -74,11 +74,8 @@ def make_agent(name: str, seed: int | None = None, depth: int | None = None) -> 
         agent = AGENTS[name](seed, depth)
     else:
         raise ValueError(
-            "L'agent "
-            + name
-            + " n'a pas de profondeur de calcul. "
-            "Les agents avec une profondeur de calcul sont "
-            ", ".join(DEPTH_AGENTS)
+            f"L'agent {name!r} n'a pas de profondeur de calcul. "
+            f"Les agents avec une profondeur de calcul sont : {', '.join(DEPTH_AGENTS)}."
         )
 
     return agent

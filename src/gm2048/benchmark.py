@@ -96,14 +96,14 @@ def markdown_table(
 
     Exemple avec ``tiles=(512, 2048)`` et deux rapports :
 
-        | Agent | Parties | Score moyen | Score médian | ≥ 512 | ≥ 2048 | ms par coup |
-        | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
-        | random | 2 | 1200 | 1200 | 0.0% | 0.0% | 0.17 |
-        | heuristic | 4 | 29750 | 25000 | 100.0% | 50.0% | 1.09 |
+        | Agent | Parties | Score moyen | Score médian | Score max | ≥ 512 | ≥ 2048 | ms par coup |
+        | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+        | random | 2 | 1200 | 1200 | 1400 | 0.0% | 0.0% | 0.17 |
+        | heuristic | 4 | 29750 | 25000 | 60000 | 100.0% | 50.0% | 1.09 |
 
     Les règles :
 
-    - Les colonnes, dans l'ordre : Agent, Parties, Score moyen, Score médian, une
+    - Les colonnes, dans l'ordre : Agent, Parties, Score moyen, Score médian, Score max, une
       colonne ``≥ T`` par tuile ``T`` de ``tiles``, puis ms par coup.
     - La deuxième ligne règle l'alignement : ``:---`` (à gauche) pour la colonne
       Agent, ``---:`` (à droite) pour toutes les colonnes de chiffres.
@@ -130,6 +130,7 @@ def markdown_table(
         "Parties",
         "Score moyen",
         "Score médian",
+        "Score max",
         *(f"≥ {tile}" for tile in tiles),
         "ms par coup",
     ]
@@ -143,6 +144,7 @@ def markdown_table(
                     str(report.n_games),
                     f"{report.mean_score:.0f}",
                     f"{report.median_score:.0f}",
+                    str(report.max_score),
                     *(f"{report.win_rate(tile):.1%}" for tile in tiles),
                     f"{report.seconds_per_move * 1000:.2f}",
                 ]

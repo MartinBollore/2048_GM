@@ -90,6 +90,11 @@ class EvaluationReport:
         return float(m)
 
     @property
+    def max_score(self) -> int:
+        """Meilleur score obtenu sur une partie."""
+        return max(r.score for r in self.results)
+
+    @property
     def seconds_per_move(self) -> float:
         """Temps moyen par coup, en secondes, sur l'ensemble des parties.
 
@@ -201,6 +206,7 @@ def format_report(report: EvaluationReport) -> str:
         f"Agent : {report.agent_name} ({report.n_games} parties)",
         f"Score moyen : {report.mean_score:.0f}",
         f"Score médian : {report.median_score:.0f}",
+        f"Meilleur score : {report.max_score}",
         f"Parties atteignant {WIN_TILE} : {report.win_rate():.1%}",
         f"Temps par coup : {report.seconds_per_move * 1000:.2f} ms",
         "",

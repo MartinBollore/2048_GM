@@ -175,6 +175,11 @@ def test_median_score_with_an_even_number_of_games() -> None:
     assert report.median_score == pytest.approx(400.0)
 
 
+def test_max_score_is_the_best_game() -> None:
+    report = report_of((100, 256), (5000, 2048), (300, 512))
+    assert report.max_score == 5000
+
+
 def test_median_resists_one_exceptional_game() -> None:
     report = report_of((100, 256), (110, 256), (120, 256), (100_000, 8192))
     assert report.median_score == pytest.approx(115.0)
@@ -217,4 +222,5 @@ def test_format_report_shows_the_main_figures() -> None:
 def test_format_report_shows_the_median_and_the_time_per_move() -> None:
     text = format_report(timed_report((100, 1.0), (900, 3.0)))
     assert "Score médian : 0" in text
+    assert "Meilleur score : 0" in text
     assert "Temps par coup : 4.00 ms" in text

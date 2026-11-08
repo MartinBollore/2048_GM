@@ -113,11 +113,11 @@ def test_markdown_table_exact_text() -> None:
     ]
     expected = "\n".join(
         [
-            "| Agent | Parties | Score moyen | Score médian | ≥ 512 | ≥ 1024 | ≥ 2048 | ≥ 4096 "
-            "| ms par coup |",
-            "| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
-            "| random | 2 | 1200 | 1200 | 0.0% | 0.0% | 0.0% | 0.0% | 0.17 |",
-            "| heuristic | 4 | 29750 | 25000 | 100.0% | 75.0% | 50.0% | 25.0% | 1.09 |",
+            "| Agent | Parties | Score moyen | Score médian | Score max | ≥ 512 | ≥ 1024 "
+            "| ≥ 2048 | ≥ 4096 | ms par coup |",
+            "| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| random | 2 | 1200 | 1200 | 1400 | 0.0% | 0.0% | 0.0% | 0.0% | 0.17 |",
+            "| heuristic | 4 | 29750 | 25000 | 60000 | 100.0% | 75.0% | 50.0% | 25.0% | 1.09 |",
         ]
     )
     assert markdown_table(reports) == expected
@@ -126,11 +126,11 @@ def test_markdown_table_exact_text() -> None:
 def test_markdown_table_with_other_tiles() -> None:
     report = report_of("greedy", (2000, 256, 200, 0.1), (3000, 512, 300, 0.1))
     lines = markdown_table([report], tiles=[256, 512]).splitlines()
-    assert (
-        lines[0] == "| Agent | Parties | Score moyen | Score médian | ≥ 256 | ≥ 512 | ms par coup |"
+    assert lines[0] == (
+        "| Agent | Parties | Score moyen | Score médian | Score max | ≥ 256 | ≥ 512 | ms par coup |"
     )
-    assert lines[1] == "| :--- | ---: | ---: | ---: | ---: | ---: | ---: |"
-    assert lines[2] == "| greedy | 2 | 2500 | 2500 | 100.0% | 50.0% | 0.40 |"
+    assert lines[1] == "| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+    assert lines[2] == "| greedy | 2 | 2500 | 2500 | 3000 | 100.0% | 50.0% | 0.40 |"
 
 
 def test_markdown_table_has_one_line_per_report_plus_two() -> None:

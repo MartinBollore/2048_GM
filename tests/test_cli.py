@@ -10,11 +10,12 @@ import typer
 from typer.testing import CliRunner
 
 from gm2048 import cli
-from gm2048.agents import Agent
+from gm2048.agents import Agent, registry
 from gm2048.agents.baselines import ExpectimaxAgent, GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.benchmark import markdown_table, run_benchmark
 from gm2048.cli import QUIT, agent_factory, app, parse_key, play_loop, progress_info
 from gm2048.engine import Action, Game, from_values
-from gm2048.evaluation import EvaluationReport, GameResult
+from gm2048.evaluation import EvaluationReport, GameResult, evaluate
 
 
 @pytest.mark.parametrize(
@@ -297,3 +298,119 @@ def test_cli_eval_rejects_a_depth_for_agents_without_search() -> None:
 def test_cli_eval_rejects_a_depth_of_zero() -> None:
     result = CliRunner().invoke(app, ["eval", "--agent", "expectimax", "--depth", "0"])
     assert result.exit_code != 0
+
+
+# --- Étape 7 : le registre et gm2048 benchmark ---------------------------------------
+
+
+def test_cli_uses_the_agent_registry() -> None:
+    # Une seule liste d'agents dans tout le projet : la ligne de commande reprend
+    # celle du registre au lieu d'en tenir une copie.
+    assert cli.AGENTS is registry.AGENTS
+    assert cli.DEPTH_AGENTS is registry.DEPTH_AGENTS
+
+
+BENCH = ["benchmark", "--agent", "random", "--agent", "greedy", "--games", "2"]
+
+
+def table_rows(output: str) -> dict[str, list[str]]:
+    """Les lignes d'agents d'un tableau Markdown, indexées par nom d'agent."""
+    rows = {}
+    for line in output.splitlines():
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if line.startswith("| ") and cells[0] not in ("Agent", ":---"):
+            rows[cells[0]] = cells
+    return rows
+
+
+def test_cli_benchmark_prints_a_markdown_table() -> None:
+    result = CliRunner().invoke(app, BENCH)
+    assert result.exit_code == 0, result.output
+    lines = result.stdout.splitlines()
+    assert lines[0].startswith("| Agent | Parties | Score moyen | Score médian |")
+    assert lines[1].startswith("| :--- |")
+    assert list(table_rows(result.stdout)) == ["random", "greedy"]
+
+
+def test_cli_benchmark_gives_the_same_scores_as_evaluate() -> None:
+    result = CliRunner().invoke(app, [*BENCH, "--seed", "7"])
+    assert result.exit_code == 0, result.output
+    rows = table_rows(result.stdout)
+    random_report = evaluate(RandomAgent(seed=7), 2, first_seed=7)
+    greedy_report = evaluate(GreedyAgent(seed=7), 2, first_seed=7)
+    assert rows["random"][1:4] == [
+        "2",
+        f"{random_report.mean_score:.0f}",
+        f"{random_report.median_score:.0f}",
+    ]
+    assert rows["greedy"][2] == f"{greedy_report.mean_score:.0f}"
+
+
+def test_cli_benchmark_keeps_the_progress_bar_out_of_the_table() -> None:
+    # La sortie standard ne contient que le tableau : on peut la rediriger dans un
+    # fichier (gm2048 benchmark > benchmark.md) et la coller dans le README.
+    result = CliRunner().invoke(app, BENCH)
+    assert result.exit_code == 0, result.output
+    assert len(result.stdout.strip().splitlines()) == 4
+
+
+def test_cli_benchmark_uses_all_agents_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Un espion remplace run_benchmark : il note la liste reçue, puis ne fait jouer
+    # que l'agent aléatoire, pour que le test reste rapide.
+    received: list[list[str]] = []
+
+    def spy(agent_names: list[str], n_games: int, *args: Any, **kwargs: Any) -> Any:
+        received.append(list(agent_names))
+        return run_benchmark(["random"], n_games, *args, **kwargs)
+
+    monkeypatch.setattr(cli, "run_benchmark", spy)
+    result = CliRunner().invoke(app, ["benchmark", "--games", "1"])
+    assert result.exit_code == 0, result.output
+    assert received == [list(registry.AGENTS)]
+
+
+def test_cli_benchmark_passes_the_depth(monkeypatch: pytest.MonkeyPatch) -> None:
+    received: list[int | None] = []
+
+    def spy(
+        agent_names: list[str],
+        n_games: int,
+        first_seed: int = 0,
+        depth: int | None = None,
+        on_game_done: Any = None,
+    ) -> list[EvaluationReport]:
+        received.append(depth)
+        return [evaluate(RandomAgent(seed=0), 1)]
+
+    monkeypatch.setattr(cli, "run_benchmark", spy)
+    result = CliRunner().invoke(
+        app, ["benchmark", "--agent", "expectimax", "--depth", "1", "--games", "1"]
+    )
+    assert result.exit_code == 0, result.output
+    assert received == [1]
+    assert "Profondeur de recherche : 1" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["benchmark", "--agent", "inconnu"],
+        ["benchmark", "--agent", "random", "--agent", "inconnu"],
+        ["benchmark", "--agent", "random", "--depth", "2"],
+        ["benchmark", "--agent", "expectimax", "--depth", "0"],
+        ["benchmark", "--games", "0"],
+    ],
+)
+def test_cli_benchmark_rejects_bad_options(arguments: list[str]) -> None:
+    # Code 2 : une erreur d'utilisation avec un message clair, pas une trace Python.
+    result = CliRunner().invoke(app, arguments)
+    assert result.exit_code == 2, result.output
+
+
+def test_markdown_table_is_what_the_benchmark_prints() -> None:
+    # Le tableau affiché est bien celui de markdown_table (à la colonne du temps près).
+    result = CliRunner().invoke(app, BENCH)
+    assert result.exit_code == 0, result.output
+    expected = markdown_table(run_benchmark(["random", "greedy"], 2))
+    printed = [line.rsplit("|", 2)[0] for line in result.stdout.strip().splitlines()]
+    assert printed == [line.rsplit("|", 2)[0] for line in expected.splitlines()]

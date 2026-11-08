@@ -17,8 +17,10 @@ lance ``pytest tests/test_evaluation.py``. Ordre conseillé : ``play_game``,
 from __future__ import annotations
 
 import collections
+import statistics
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from gm2048.agents import Agent
 from gm2048.engine import Game
@@ -39,6 +41,13 @@ class GameResult:
     """Valeur de la plus grande tuile en fin de partie (par exemple 512)."""
     moves: int
     """Nombre de coups joués."""
+    seconds: float = field(default=0.0, compare=False)
+    """Durée de la partie en secondes, temps de réflexion de l'agent compris.
+
+    Ce champ est ignoré quand on compare deux résultats avec ``==`` : la même partie,
+    rejouée, ne dure jamais exactement le même temps. Il vaut 0.0 par défaut, pour les
+    résultats fabriqués à la main dans les tests.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +74,36 @@ class EvaluationReport:
 
         m = sum(r.score for r in self.results) / self.n_games
         return float(m)
+
+    @property
+    def median_score(self) -> float:
+        """Score médian : la moitié des parties fait moins, l'autre moitié fait plus.
+
+        Avec un nombre pair de parties, c'est la moyenne des deux scores du milieu.
+        La médiane résiste mieux que la moyenne aux quelques parties exceptionnelles :
+        compare les deux dans le tableau du benchmark.
+
+        Indice : le module ``statistics`` de Python a ce qu'il faut. Renvoie un ``float``.
+        """
+
+        m = statistics.median(r.score for r in self.results)
+        return float(m)
+
+    @property
+    def seconds_per_move(self) -> float:
+        """Temps moyen par coup, en secondes, sur l'ensemble des parties.
+
+        C'est la durée totale de toutes les parties divisée par le nombre total de
+        coups, et non la moyenne des temps par coup de chaque partie : une longue
+        partie pèse plus qu'une courte, comme dans la réalité. Vaut 0.0 si aucun
+        coup n'a été joué.
+        """
+
+        t_sum = sum(r.seconds for r in self.results)
+        move_sum = sum(r.moves for r in self.results)
+        tm = t_sum / move_sum if move_sum > 0 else 0
+
+        return float(tm)
 
     def win_rate(self, tile: int = WIN_TILE) -> float:
         """Proportion des parties (entre 0.0 et 1.0) où ``tile`` a été atteinte.
@@ -97,9 +136,15 @@ class EvaluationReport:
 
 
 def play_game(agent: Agent, seed: int) -> GameResult:
-    """Fait jouer une partie complète à ``agent`` avec la graine ``seed``."""
+    """Fait jouer une partie complète à ``agent`` avec la graine ``seed``.
+
+    Étape 7 : mesure aussi la durée de la partie avec ``time.perf_counter()`` et
+    range-la dans le champ ``seconds`` du résultat. ``perf_counter`` renvoie un
+    instant en secondes ; seule la différence entre deux appels a un sens.
+    """
 
     game = Game(seed=seed)
+    start = time.perf_counter()
     while not game.done:
         action = agent.act(game.board, game.legal_actions())
         game.step(action)
@@ -107,7 +152,10 @@ def play_game(agent: Agent, seed: int) -> GameResult:
     score = game.score
     max_tile = game.max_tile
     moves = game.moves
-    game_result = GameResult(seed=seed, score=score, max_tile=max_tile, moves=moves)
+    seconds = time.perf_counter() - start
+    game_result = GameResult(
+        seed=seed, score=score, max_tile=max_tile, moves=moves, seconds=seconds
+    )
 
     return game_result
 
@@ -152,7 +200,9 @@ def format_report(report: EvaluationReport) -> str:
     lines = [
         f"Agent : {report.agent_name} ({report.n_games} parties)",
         f"Score moyen : {report.mean_score:.0f}",
+        f"Score médian : {report.median_score:.0f}",
         f"Parties atteignant {WIN_TILE} : {report.win_rate():.1%}",
+        f"Temps par coup : {report.seconds_per_move * 1000:.2f} ms",
         "",
         "Tuile max   Parties   Part",
     ]

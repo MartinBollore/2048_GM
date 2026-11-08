@@ -11,26 +11,11 @@ from typing import Annotated, Final, Literal
 import typer
 
 from gm2048.agents import Agent
-from gm2048.agents.baselines import ExpectimaxAgent, GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.agents.registry import AGENTS, DEPTH_AGENTS, make_agent
+from gm2048.benchmark import markdown_table, run_benchmark
 from gm2048.engine import Action, Game, render
 from gm2048.evaluation import GameResult, evaluate, format_report
 from gm2048.gui.theme import THEMES
-
-AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
-    "random": RandomAgent,
-    "greedy": GreedyAgent,
-    "heuristic": HeuristicAgent,
-    "expectimax": ExpectimaxAgent,
-}
-"""Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
-à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval`` et
-``gm2048 watch``."""
-
-DEPTH_AGENTS: Final[dict[str, Callable[[int | None, int], Agent]]] = {
-    "expectimax": lambda seed, depth: ExpectimaxAgent(seed, depth=depth),
-}
-"""Les agents qui acceptent une profondeur de recherche (option ``--depth``) :
-nom → fonction qui crée l'agent à partir d'une graine et d'une profondeur."""
 
 
 def agent_factory(name: str, depth: int | None = None) -> Callable[[int | None], Agent]:
@@ -47,8 +32,8 @@ def agent_factory(name: str, depth: int | None = None) -> Callable[[int | None],
             f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
             param_hint="--depth",
         )
-    make = DEPTH_AGENTS[name]
-    return lambda seed: make(seed, depth)
+    AGENTS[name]
+    return lambda seed: make_agent(name, seed, depth)
 
 
 app = typer.Typer(
@@ -308,3 +293,81 @@ def progress_info(played: Sequence[GameResult]) -> str | None:
     mean = sum(result.score for result in played) / len(played)
     best = max(result.max_tile for result in played)
     return f"score moyen {mean:.0f}, meilleure tuile {best}"
+
+
+@app.command()
+def benchmark(
+    agent: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Agent à comparer ; répète l'option pour en mettre plusieurs. "
+            f"Par défaut, tous : {', '.join(AGENTS)}."
+        ),
+    ] = None,
+    games: Annotated[int, typer.Option(min=1, help="Nombre de parties par agent.")] = 100,
+    seed: Annotated[int, typer.Option(help="Graine de la première partie (et des agents).")] = 0,
+    depth: DepthOption = None,
+) -> None:
+    """Comparer plusieurs agents sur les mêmes parties et afficher un tableau Markdown.
+
+    Étape 7, à toi de jouer. Le comportement attendu :
+
+    - Sans ``--agent``, tous les agents du registre, dans l'ordre de ``AGENTS``.
+    - Un nom inconnu, ou un ``--depth`` alors qu'aucun agent choisi n'a de profondeur,
+      donne une erreur d'utilisation (``typer.BadParameter``), avant de jouer la
+      moindre partie. ``--depth`` ne s'applique qu'aux agents de ``DEPTH_AGENTS``.
+    - Les parties sont jouées par ``run_benchmark`` et le tableau produit par
+      ``markdown_table`` : importe-les depuis ``gm2048.benchmark`` sous ces noms.
+    - Une barre de progression sur la sortie d'erreur, comme dans ``eval_``, avec une
+      étape par partie jouée (tous agents confondus).
+    - Sur la sortie standard, uniquement le tableau, précédé de la ligne
+      ``Profondeur de recherche : N`` si ``--depth`` est donné.
+
+    Attention au temps : expectimax à profondeur 2 met plus d'une minute et demie par
+    partie. Pour 1 000 parties, ``--depth 1`` est plus raisonnable.
+    """
+    if agent is None:
+        agent = list(AGENTS)
+
+    for name in agent:
+        _check_agent(name)
+
+    if depth is not None and not any(name in DEPTH_AGENTS for name in agent):
+        raise typer.BadParameter(
+            "aucun des agents choisis n'a de profondeur de recherche. "
+            f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
+            param_hint="--depth",
+        )
+
+    label = "Benchmark" + ("" if depth is None else f" (profondeur {depth})")
+    played: list[GameResult] = []
+
+    def show_info(_: GameResult | None) -> str | None:
+        return progress_info(played)
+
+    # Comme pour eval : la barre sur la sortie d'erreur, le tableau seul sur la sortie
+    # standard (gm2048 benchmark > benchmark.md ne récupère que le tableau).
+    with typer.progressbar(
+        length=games * len(agent),
+        label=label,
+        show_pos=True,
+        item_show_func=show_info,
+        file=sys.stderr,
+    ) as bar:
+
+        def on_game_done(result: GameResult) -> None:
+            played.append(result)
+            bar.current_item = result
+            bar.update(1)
+
+        evaluation_reports = run_benchmark(
+            agent_names=agent,
+            n_games=games,
+            first_seed=seed,
+            depth=depth,
+            on_game_done=on_game_done,
+        )
+
+    if depth is not None:
+        typer.echo(f"Profondeur de recherche : {depth}")
+    typer.echo(markdown_table(evaluation_reports))

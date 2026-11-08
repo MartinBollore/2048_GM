@@ -1,4 +1,4 @@
-"""Tests du module d'évaluation (étape 2 de la phase 2).
+"""Tests du module d'évaluation (étapes 2 et 7 de la phase 2).
 
 Chaque test décrit un comportement attendu. Lance-les avec :
 
@@ -6,6 +6,8 @@ Chaque test décrit un comportement attendu. Lance-les avec :
 """
 
 from __future__ import annotations
+
+import time
 
 import numpy as np
 import pytest
@@ -39,6 +41,14 @@ class CountingAgent(FirstLegalAgent):
     def act(self, board: Board, legal_mask: ActionMask) -> Action:
         self.calls += 1
         assert legal_mask.any(), "on a demandé un coup alors qu'aucun n'était légal"
+        return super().act(board, legal_mask)
+
+
+class SlowAgent(CountingAgent):
+    """Comme CountingAgent, mais réfléchit 1 ms avant chaque coup."""
+
+    def act(self, board: Board, legal_mask: ActionMask) -> Action:
+        time.sleep(0.001)
         return super().act(board, legal_mask)
 
 
@@ -81,6 +91,26 @@ def test_play_game_is_reproducible() -> None:
 def test_different_seeds_give_different_games() -> None:
     results = {play_game(RandomAgent(seed=0), seed=seed) for seed in range(5)}
     assert len(results) > 1
+
+
+def test_play_game_measures_the_duration_of_the_game() -> None:
+    # L'agent dort 1 ms par coup : la partie dure donc au moins une milliseconde par
+    # coup. La mesure doit inclure le temps de réflexion de l'agent.
+    agent = SlowAgent()
+    result = play_game(agent, seed=0)
+    assert result.seconds >= 0.001 * agent.calls
+    assert result.seconds < 60
+
+
+def test_a_fast_game_still_has_a_positive_duration() -> None:
+    assert play_game(FirstLegalAgent(), seed=1).seconds > 0
+
+
+def test_the_duration_is_ignored_when_comparing_results() -> None:
+    # Deux fois la même partie ne durent jamais exactement le même temps, mais ce sont
+    # bien les mêmes parties : ``seconds`` ne compte pas dans ``==``.
+    assert GameResult(0, 100, 128, 10, seconds=0.5) == GameResult(0, 100, 128, 10, seconds=2.0)
+    assert GameResult(0, 100, 128, 10).seconds == 0.0
 
 
 # --- evaluate ----------------------------------------------------------------
@@ -134,6 +164,43 @@ def test_win_rate_counts_games_reaching_the_tile() -> None:
     assert report.win_rate(8192) == pytest.approx(0.0)
 
 
+def test_median_score_with_an_odd_number_of_games() -> None:
+    report = report_of((100, 256), (5000, 2048), (300, 512))
+    assert report.median_score == pytest.approx(300.0)
+    assert isinstance(report.median_score, float)
+
+
+def test_median_score_with_an_even_number_of_games() -> None:
+    report = report_of((100, 256), (200, 256), (600, 512), (900, 1024))
+    assert report.median_score == pytest.approx(400.0)
+
+
+def test_median_resists_one_exceptional_game() -> None:
+    report = report_of((100, 256), (110, 256), (120, 256), (100_000, 8192))
+    assert report.median_score == pytest.approx(115.0)
+    assert report.mean_score > 20_000
+
+
+def timed_report(*games: tuple[int, float]) -> EvaluationReport:
+    """Rapport fabriqué à la main à partir de couples (coups, secondes)."""
+    results = tuple(
+        GameResult(seed=i, score=0, max_tile=2, moves=moves, seconds=seconds)
+        for i, (moves, seconds) in enumerate(games)
+    )
+    return EvaluationReport(agent_name="test", results=results)
+
+
+def test_seconds_per_move_is_total_time_over_total_moves() -> None:
+    # 1 s pour 100 coups, puis 3 s pour 900 coups : 4 s pour 1 000 coups, soit 4 ms.
+    # La moyenne des deux parties (10 ms et 3,3 ms par coup) donnerait autre chose.
+    report = timed_report((100, 1.0), (900, 3.0))
+    assert report.seconds_per_move == pytest.approx(0.004)
+
+
+def test_seconds_per_move_without_any_move_is_zero() -> None:
+    assert timed_report((0, 0.0), (0, 0.0)).seconds_per_move == 0.0
+
+
 def test_tile_counts_are_sorted_by_tile() -> None:
     report = report_of((10, 512), (20, 128), (30, 512))
     assert report.tile_counts == {128: 1, 512: 2}
@@ -145,3 +212,9 @@ def test_format_report_shows_the_main_figures() -> None:
     assert "test" in text
     assert "300" in text
     assert "66.7%" in text
+
+
+def test_format_report_shows_the_median_and_the_time_per_move() -> None:
+    text = format_report(timed_report((100, 1.0), (900, 3.0)))
+    assert "Score médian : 0" in text
+    assert "Temps par coup : 4.00 ms" in text

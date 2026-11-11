@@ -89,14 +89,14 @@ le score moyen, le meilleur score et la meilleure tuile obtenus jusque-là. Elle
 
 ## Benchmark
 
-Profondeur de recherche : 1
-
 | Agent | Parties | Score moyen | Score médian | Score max | ≥ 512 | ≥ 1024 | ≥ 2048 | ≥ 4096 | ms par coup |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| random | 10 | 1576 | 1514 | 2976 | 0.0% | 0.0% | 0.0% | 0.0% | 0.63 |
-| greedy | 10 | 2074 | 2240 | 3108 | 0.0% | 0.0% | 0.0% | 0.0% | 0.77 |
-| heuristic | 10 | 13130 | 12016 | 33820 | 90.0% | 60.0% | 10.0% | 0.0% | 1.09 |
-| expectimax | 10 | 15887 | 16046 | 18808 | 100.0% | 100.0% | 0.0% | 0.0% | 4.81 |
+| random | 1000 | 1104 | 1056 | 4700 | 0.1% | 0.0% | 0.0% | 0.0% | 0.66 |
+| greedy | 1000 | 1961 | 1636 | 5832 | 2.1% | 0.0% | 0.0% | 0.0% | 0.82 |
+| heuristic | 1000 | 11545 | 11146 | 37300 | 89.4% | 56.7% | 9.2% | 0.0% | 1.11 |
+| expectimax (Profondeur 1) | 1000 | 18235 | 16368 | 59236 | 97.4% | 81.4% | 31.8% | 0.7% | 4.66 |
+| expectimax (Profondeur 2) | 500 | 19423 | 16260 | 60124 | 99.4% | 88.6% | 33.8% | 0.6% | 101.31 |
+
 
 
 ## Tests et qualité

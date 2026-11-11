@@ -32,8 +32,15 @@ from __future__ import annotations
 
 import numpy as np
 
-# BOARD_SIZE, à importer depuis gm2048.engine.board à côté de Board.
-from gm2048.engine.board import BOARD_SIZE, Board, new_board
+from gm2048.engine import Action
+from gm2048.engine.board import (
+    ACTIONS,
+    BOARD_SIZE,
+    SPAWN_FOUR_PROBABILITY,
+    ActionMask,
+    Board,
+    new_board,
+)
 
 Bitboard = int
 """Plateau codé dans un entier de 64 bits : 16 cases de 4 bits."""
@@ -192,5 +199,230 @@ def transpose(bits: Bitboard) -> Bitboard:
 
             bits = bits & ~(CELL_MASK << k_ij) | (exp_ji << k_ij)
             bits = bits & ~(CELL_MASK << k_ji) | (exp_ij << k_ji)
+
+    return bits
+
+
+# --- Étape 2 : les coups en tables précalculées ---------------------------------
+#
+# Une ligne de 4 cases tient sur 16 bits : il n'existe que 65 536 lignes possibles.
+# Au chargement du module, on calcule une fois pour toutes, pour chacune, la ligne
+# obtenue après un glissement à gauche et les points gagnés. Pendant la partie, un
+# coup ne calcule plus aucun glissement : il lit dans ces deux tables.
+
+
+ROW_COUNT = 1 << ROW_BITS
+"""Nombre de lignes possibles : 65 536."""
+
+
+def reverse_row(row: int) -> int:
+    """Inverse l'ordre des 4 cases d'une ligne : la colonne 0 passe en colonne 3, etc.
+
+    Sert à glisser vers la droite : inverser, glisser à gauche, puis inverser de nouveau.
+
+    >>> hex(reverse_row(0x4321))
+    '0x1234'
+    """
+
+    row_inv = 0
+    for i in range(0, BOARD_SIZE):
+        k_i = i * CELL_BITS
+        exposant = (row >> k_i) & CELL_MASK
+
+        j = BOARD_SIZE - i - 1
+        k_j = j * CELL_BITS
+        row_inv = row_inv | (exposant << k_j)
+
+    return row_inv
+
+
+def slide_row_left(row: int) -> tuple[int, int]:
+    """Glisse une ligne de 16 bits vers la gauche, c'est-à-dire vers la colonne 0.
+
+    Renvoie ``(nouvelle_ligne, points)``. Les règles sont celles du moteur de la
+    phase 1 : les tuiles se tassent vers la colonne 0, deux tuiles égales voisines
+    fusionnent, chaque tuile fusionne au plus une fois par coup en partant de la
+    colonne 0, et les points sont la somme des valeurs des tuiles créées
+    (``1 << exposant``).
+
+    Une seule différence : deux 15 voisins ne fusionnent pas, car l'exposant 16 (la
+    tuile 65 536) ne tient pas sur 4 bits. Ce cas n'arrive jamais en pratique.
+
+    Cette fonction n'a pas besoin d'être rapide : elle ne sert qu'à remplir les tables.
+
+    >>> new_row, points = slide_row_left(0x1111)  # [2, 2, 2, 2] devient [4, 4, 0, 0]
+    >>> hex(new_row), points
+    ('0x22', 8)
+    """
+
+    tiles = []
+    for i in range(BOARD_SIZE):
+        k = i * CELL_BITS
+        t = (row >> k) & CELL_MASK
+        if t != 0:
+            tiles.append(int(t))
+
+    row_board_slided: list[int] = []
+    reward = 0
+    i = 0
+    while i < len(tiles):
+        if i + 1 < len(tiles) and tiles[i] == tiles[i + 1] and tiles[i] != MAX_EXPONENT:
+            exponent = tiles[i] + 1
+            row_board_slided.append(exponent)
+            reward += 1 << exponent
+            i += 2
+        else:
+            row_board_slided.append(tiles[i])
+            i += 1
+    row_board_slided.extend([0] * (BOARD_SIZE - len(row_board_slided)))
+
+    row_slided = 0
+    for i in range(BOARD_SIZE):
+        k = i * CELL_BITS
+        row_slided = row_slided | (row_board_slided[i] << k)
+
+    return row_slided, reward
+
+
+def build_row_tables() -> tuple[list[int], list[int]]:
+    """Calcule les deux tables, pour les ``ROW_COUNT`` lignes possibles.
+
+    Renvoie ``(row_left, row_reward)`` : ``row_left[row]`` est la ligne ``row``
+    après un glissement à gauche, et ``row_reward[row]`` les points gagnés, comme
+    le donne :func:`slide_row_left`.
+    """
+
+    row_left = []
+    row_reward = []
+
+    bit_row_limit = 1 << ROW_BITS
+    for row in range(bit_row_limit):
+        row_slided, reward = slide_row_left(row=row)
+
+        row_left.append(row_slided)
+        row_reward.append(reward)
+
+    return row_left, row_reward
+
+
+# tables, calculées au chargement du module par un seul appel à build_row_tables.
+ROW_LEFT: list[int] = []
+"""``ROW_LEFT[row]`` : la ligne ``row`` après un glissement à gauche."""
+
+ROW_REWARD: list[int] = []
+"""``ROW_REWARD[row]`` : les points gagnés par ce glissement."""
+
+ROW_LEFT, ROW_REWARD = build_row_tables()
+
+
+def slide_bits(bits: Bitboard, action: int) -> tuple[Bitboard, int]:
+    """Applique un coup sans faire apparaître de tuile : renvoie ``(afterstate, points)``.
+
+    ``action`` suit l'ordre de ``gm2048.engine.Action`` : 0 haut, 1 droite, 2 bas,
+    3 gauche. Le résultat est celui de ``engine.slide`` sur le plateau NumPy
+    équivalent. Un coup illégal renvoie ``(bits, 0)`` : le plateau ne change pas.
+
+    Aucun glissement n'est calculé ici, seulement des lectures dans ``ROW_LEFT`` et
+    ``ROW_REWARD`` : :func:`reverse_row` ramène la droite à la gauche, et
+    :func:`transpose` ramène le haut et le bas à la gauche et à la droite.
+    """
+
+    bits = orient(bits=bits, action=action)
+
+    reward = 0
+    bits_slided = 0
+    for i in range(BOARD_SIZE):
+        k = i * ROW_BITS
+        row = (bits >> k) & ROW_MASK
+
+        row_slided = ROW_LEFT[row]
+        reward += ROW_REWARD[row]
+
+        bits_slided = bits_slided | (row_slided << k)
+
+    bits_slided = unorient(bits=bits_slided, action=action)
+
+    return bits_slided, reward
+
+
+def orient(bits: Bitboard, action: int) -> Bitboard:
+    """Réoriente le plateau pour que ``action`` devienne un glissement à gauche."""
+    if action == Action.UP or action == Action.DOWN:
+        bits = transpose(bits)
+
+    if action == Action.RIGHT or action == Action.DOWN:
+        for i in range(BOARD_SIZE):
+            k = i * ROW_BITS
+            row = reverse_row(row=(bits >> k) & ROW_MASK)
+            bits = bits & ~(ROW_MASK << k) | (row << k)
+
+    return bits
+
+
+def unorient(bits: Bitboard, action: int) -> Bitboard:
+    if action == Action.RIGHT or action == Action.DOWN:
+        for i in range(BOARD_SIZE):
+            k = i * ROW_BITS
+            row = reverse_row(row=(bits >> k) & ROW_MASK)
+            bits = bits & ~(ROW_MASK << k) | (row << k)
+
+    if action == Action.UP or action == Action.DOWN:
+        bits = transpose(bits)
+
+    return bits
+
+
+def legal_actions_bits(bits: Bitboard) -> ActionMask:
+    """Masque des coups qui modifient le plateau, comme ``engine.legal_actions``.
+
+    Un tableau NumPy de 4 booléens, indexé par action.
+    """
+
+    action_mask = []
+    for action in ACTIONS:
+        afterstate, _ = slide_bits(bits=bits, action=action)
+
+        action_mask.append(bits != afterstate)
+
+    return np.array(action_mask, dtype=np.bool_)
+
+
+def empty_cells_bits(bits: Bitboard) -> list[int]:
+    """Numéros des cases vides, de 0 à 15, dans l'ordre croissant.
+
+    Même résultat que ``engine.empty_cells``, sous forme de liste.
+    """
+
+    empty_cells = []
+    for i in range(BOARD_SIZE**2):
+        k = i * CELL_BITS
+        exposant = (bits >> k) & CELL_MASK
+
+        if exposant == 0:
+            empty_cells.append(i)
+
+    return empty_cells
+
+
+def spawn_bits(bits: Bitboard, rng: np.random.Generator) -> Bitboard:
+    """Ajoute un 2 (90 %) ou un 4 (10 %) sur une case vide tirée au hasard.
+
+    Fait exactement les mêmes tirages que ``engine.spawn``, dans le même ordre :
+    ``rng.choice`` sur la liste des cases vides, puis ``rng.random()`` comparé à
+    ``SPAWN_FOUR_PROBABILITY`` pour décider d'un 4. Avec la même graine, les deux
+    moteurs font donc apparaître la même tuile au même endroit.
+
+    Lève ``ValueError`` si le plateau est plein.
+    """
+
+    empty = empty_cells_bits(bits=bits)
+    if len(empty) == 0:
+        raise ValueError("Aucune case vide : impossible d'ajouter une tuile.")
+
+    cell = int(rng.choice(empty))
+    exponent = 2 if rng.random() < SPAWN_FOUR_PROBABILITY else 1
+
+    k = cell * CELL_BITS
+    bits = bits & ~(CELL_MASK << k) | (exponent << k)
 
     return bits

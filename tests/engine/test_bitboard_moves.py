@@ -29,17 +29,19 @@ from gm2048.engine import (
     spawn,
 )
 from gm2048.engine.bitboard import (
+    ROW_ACTION_LEFT,
+    ROW_ACTION_RIGHT,
     ROW_COUNT,
-    ROW_LEFT,
     ROW_MASK,
-    ROW_REWARD,
+    ROW_REWARD_LEFT,
+    ROW_REWARD_RIGHT,
     build_row_tables,
     empty_cells_bits,
     from_bitboard,
     legal_actions_bits,
     reverse_row,
     slide_bits,
-    slide_row_left,
+    slide_row,
     spawn_bits,
     to_bitboard,
 )
@@ -51,6 +53,13 @@ wide_boards = arrays(np.uint8, (4, 4), elements=st.integers(min_value=0, max_val
 any_boards = st.one_of(small_boards, wide_boards)
 rows = st.integers(min_value=0, max_value=ROW_MASK)
 seeds = st.integers(min_value=0, max_value=2**32 - 1)
+row_actions = st.sampled_from([Action.LEFT, Action.RIGHT])
+
+TABLES = {
+    Action.LEFT: (ROW_ACTION_LEFT, ROW_REWARD_LEFT),
+    Action.RIGHT: (ROW_ACTION_RIGHT, ROW_REWARD_RIGHT),
+}
+"""Les tables du module, par direction."""
 
 
 def row_of(*exponents: int) -> int:
@@ -86,52 +95,70 @@ def test_reverse_row_stays_inside_16_bits(row: int) -> None:
     assert 0 <= reverse_row(row) <= ROW_MASK
 
 
-# --- slide_row_left -------------------------------------------------------------------
+# --- slide_row --------------------------------------------------------------------
+
+# (avant, après, points) pour un glissement à gauche, colonnes 0 à 3. Pour la droite,
+# on lit les mêmes exemples dans le miroir : colonnes 3 à 0.
+SLIDE_EXAMPLES = [
+    ((0, 0, 0, 0), (0, 0, 0, 0), 0),  # ligne vide
+    ((0, 0, 0, 1), (1, 0, 0, 0), 0),  # une tuile glisse jusqu'au bord
+    ((1, 2, 3, 4), (1, 2, 3, 4), 0),  # rien ne bouge
+    ((1, 1, 0, 0), (2, 0, 0, 0), 4),  # 2 + 2 = 4
+    ((1, 0, 0, 1), (2, 0, 0, 0), 4),  # fusion par-dessus les trous
+    ((1, 1, 1, 1), (2, 2, 0, 0), 8),  # deux fusions
+    ((1, 1, 2, 0), (2, 2, 0, 0), 4),  # le 4 créé ne refusionne pas
+    ((1, 1, 1, 0), (2, 1, 0, 0), 4),  # on fusionne depuis le bord
+    ((3, 3, 3, 3), (4, 4, 0, 0), 32),
+    ((10, 10, 0, 0), (11, 0, 0, 0), 2048),  # la tuile 2048
+    ((14, 14, 0, 0), (15, 0, 0, 0), 32768),
+]
 
 
-@pytest.mark.parametrize(
-    ("before", "after", "points"),
-    [
-        ((0, 0, 0, 0), (0, 0, 0, 0), 0),  # ligne vide
-        ((0, 0, 0, 1), (1, 0, 0, 0), 0),  # une tuile glisse jusqu'au bord
-        ((1, 2, 3, 4), (1, 2, 3, 4), 0),  # rien ne bouge
-        ((1, 1, 0, 0), (2, 0, 0, 0), 4),  # 2 + 2 = 4
-        ((1, 0, 0, 1), (2, 0, 0, 0), 4),  # fusion par-dessus les trous
-        ((1, 1, 1, 1), (2, 2, 0, 0), 8),  # deux fusions
-        ((1, 1, 2, 0), (2, 2, 0, 0), 4),  # le 4 créé ne refusionne pas
-        ((1, 1, 1, 0), (2, 1, 0, 0), 4),  # on fusionne depuis le bord
-        ((3, 3, 3, 3), (4, 4, 0, 0), 32),
-        ((10, 10, 0, 0), (11, 0, 0, 0), 2048),  # la tuile 2048
-        ((14, 14, 0, 0), (15, 0, 0, 0), 32768),
-    ],
-)
+@pytest.mark.parametrize(("before", "after", "points"), SLIDE_EXAMPLES)
 def test_slide_row_left_examples(
     before: tuple[int, ...], after: tuple[int, ...], points: int
 ) -> None:
-    assert slide_row_left(row_of(*before)) == (row_of(*after), points)
+    assert slide_row(row_of(*before), Action.LEFT) == (row_of(*after), points)
+
+
+@pytest.mark.parametrize(("before", "after", "points"), SLIDE_EXAMPLES)
+def test_slide_row_right_examples(
+    before: tuple[int, ...], after: tuple[int, ...], points: int
+) -> None:
+    # Le même exemple vu dans un miroir : la colonne 0 devient la colonne 3.
+    mirrored = slide_row(row_of(*reversed(before)), Action.RIGHT)
+    assert mirrored == (row_of(*reversed(after)), points)
 
 
 def test_two_15_do_not_merge() -> None:
     # La tuile 65 536 (exposant 16) ne tient pas sur 4 bits.
-    assert slide_row_left(row_of(15, 15, 0, 0)) == (row_of(15, 15, 0, 0), 0)
-    assert slide_row_left(row_of(0, 15, 0, 15)) == (row_of(15, 15, 0, 0), 0)
+    assert slide_row(row_of(15, 15, 0, 0), Action.LEFT) == (row_of(15, 15, 0, 0), 0)
+    assert slide_row(row_of(0, 15, 0, 15), Action.LEFT) == (row_of(15, 15, 0, 0), 0)
+    assert slide_row(row_of(15, 0, 15, 0), Action.RIGHT) == (row_of(0, 0, 15, 15), 0)
 
 
-@given(rows)
-def test_slide_row_left_stays_inside_16_bits(row: int) -> None:
-    new_row, points = slide_row_left(row)
+@pytest.mark.parametrize("action", [Action.UP, Action.DOWN])
+def test_slide_row_refuses_up_and_down(action: Action) -> None:
+    with pytest.raises(ValueError):
+        slide_row(0x1111, action)
+
+
+@given(rows, row_actions)
+def test_slide_row_stays_inside_16_bits(row: int, action: Action) -> None:
+    new_row, points = slide_row(row, action)
     assert 0 <= new_row <= ROW_MASK
     assert points >= 0
 
 
-def test_slide_row_left_matches_the_numpy_engine_on_every_row() -> None:
+@pytest.mark.parametrize("action", [Action.LEFT, Action.RIGHT])
+def test_slide_row_matches_the_numpy_engine_on_every_row(action: Action) -> None:
     # Toutes les lignes dont les exposants vont de 0 à 14 (50 625 lignes) : on place
     # la ligne en haut d'un plateau vide et on la fait glisser avec le moteur NumPy.
     board = new_board()
     for exponents in itertools.product(range(15), repeat=4):
         board[0] = exponents
-        expected = slide(board, Action.LEFT)
-        new_row, points = slide_row_left(row_of(*exponents))
+        expected = slide(board, action)
+        new_row, points = slide_row(row_of(*exponents), action)
         assert new_row == row_of(*(int(e) for e in expected.afterstate[0])), exponents
         assert points == expected.reward, exponents
 
@@ -143,18 +170,22 @@ def test_row_count() -> None:
     assert ROW_COUNT == 65_536
 
 
-def test_tables_have_one_entry_per_row() -> None:
-    assert len(ROW_LEFT) == ROW_COUNT
-    assert len(ROW_REWARD) == ROW_COUNT
+@pytest.mark.parametrize("action", [Action.LEFT, Action.RIGHT])
+def test_tables_have_one_entry_per_row(action: Action) -> None:
+    row_action, row_reward = TABLES[action]
+    assert len(row_action) == ROW_COUNT
+    assert len(row_reward) == ROW_COUNT
 
 
-@given(rows)
-def test_tables_match_slide_row_left(row: int) -> None:
-    assert (ROW_LEFT[row], ROW_REWARD[row]) == slide_row_left(row)
+@given(rows, row_actions)
+def test_tables_match_slide_row(row: int, action: Action) -> None:
+    row_action, row_reward = TABLES[action]
+    assert (row_action[row], row_reward[row]) == slide_row(row, action)
 
 
-def test_build_row_tables_builds_the_module_tables() -> None:
-    assert build_row_tables() == (ROW_LEFT, ROW_REWARD)
+@pytest.mark.parametrize("action", [Action.LEFT, Action.RIGHT])
+def test_build_row_tables_builds_the_module_tables(action: Action) -> None:
+    assert build_row_tables(action) == TABLES[action]
 
 
 # --- slide_bits -----------------------------------------------------------------------

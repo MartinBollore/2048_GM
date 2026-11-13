@@ -63,6 +63,14 @@ MAX_EXPONENT = 15
 BITBOARD_LIMIT = 1 << 64
 """Un bitboard valide est un entier de 0 à ``BITBOARD_LIMIT - 1``."""
 
+TRANSPOSE_DIAG_MASK = sum([0xF << (i * CELL_BITS) for i in [0, 5, 10, 15]])
+TRANSPOSE_PLUS_3 = sum([0xF << (i * CELL_BITS) for i in [1, 6, 11]])
+TRANSPOSE_MINUS_3 = sum([0xF << (i * CELL_BITS) for i in [4, 9, 14]])
+TRANSPOSE_PLUS_6 = sum([0xF << (i * CELL_BITS) for i in [2, 7]])
+TRANSPOSE_MINUS_6 = sum([0xF << (i * CELL_BITS) for i in [8, 13]])
+TRANSPOSE_PLUS_9 = 0xF << (3 * CELL_BITS)
+TRANSPOSE_MINUS_9 = 0xF << (12 * CELL_BITS)
+
 
 # --- Conversion entre NumPy et bitboard ----------------------------------------
 
@@ -187,18 +195,15 @@ def transpose(bits: Bitboard) -> Bitboard:
     ligne. Transposer deux fois redonne le plateau de départ.
     """
 
-    for i in range(0, BOARD_SIZE - 1):
-        for j in range(i + 1, BOARD_SIZE):
-            n_ij = i * BOARD_SIZE + j
-            k_ij = n_ij * CELL_BITS
-            exp_ij = (bits >> k_ij) & CELL_MASK
-
-            n_ji = j * BOARD_SIZE + i
-            k_ji = n_ji * CELL_BITS
-            exp_ji = (bits >> k_ji) & CELL_MASK
-
-            bits = bits & ~(CELL_MASK << k_ij) | (exp_ji << k_ij)
-            bits = bits & ~(CELL_MASK << k_ji) | (exp_ij << k_ji)
+    bits = (
+        bits & TRANSPOSE_DIAG_MASK
+        | ((bits & TRANSPOSE_PLUS_3) << 12)
+        | ((bits & TRANSPOSE_MINUS_3) >> 12)
+        | ((bits & TRANSPOSE_PLUS_6) << 24)
+        | ((bits & TRANSPOSE_MINUS_6) >> 24)
+        | ((bits & TRANSPOSE_PLUS_9) << 36)
+        | ((bits & TRANSPOSE_MINUS_9) >> 36)
+    )
 
     return bits
 
@@ -236,7 +241,7 @@ def reverse_row(row: int) -> int:
     return row_inv
 
 
-def slide_row_left(row: int) -> tuple[int, int]:
+def slide_row(row: int, action: Action) -> tuple[int, int]:
     """Glisse une ligne de 16 bits vers la gauche, c'est-à-dire vers la colonne 0.
 
     Renvoie ``(nouvelle_ligne, points)``. Les règles sont celles du moteur de la
@@ -250,10 +255,15 @@ def slide_row_left(row: int) -> tuple[int, int]:
 
     Cette fonction n'a pas besoin d'être rapide : elle ne sert qu'à remplir les tables.
 
-    >>> new_row, points = slide_row_left(0x1111)  # [2, 2, 2, 2] devient [4, 4, 0, 0]
+    >>> new_row, points = slide_row(0x1111, Action.LEFT)  # [2, 2, 2, 2] devient [4, 4, 0, 0]
     >>> hex(new_row), points
     ('0x22', 8)
     """
+
+    if action == Action.RIGHT:
+        row = reverse_row(row=row)
+    elif action != Action.LEFT:
+        raise ValueError("Action ne peut que être LEFT ou RIGHT")
 
     tiles = []
     for i in range(BOARD_SIZE):
@@ -281,10 +291,13 @@ def slide_row_left(row: int) -> tuple[int, int]:
         k = i * CELL_BITS
         row_slided = row_slided | (row_board_slided[i] << k)
 
+    if action == Action.RIGHT:
+        row_slided = reverse_row(row=row_slided)
+
     return row_slided, reward
 
 
-def build_row_tables() -> tuple[list[int], list[int]]:
+def build_row_tables(action: Action) -> tuple[list[int], list[int]]:
     """Calcule les deux tables, pour les ``ROW_COUNT`` lignes possibles.
 
     Renvoie ``(row_left, row_reward)`` : ``row_left[row]`` est la ligne ``row``
@@ -292,27 +305,25 @@ def build_row_tables() -> tuple[list[int], list[int]]:
     le donne :func:`slide_row_left`.
     """
 
-    row_left = []
+    row_action = []
     row_reward = []
 
     bit_row_limit = 1 << ROW_BITS
     for row in range(bit_row_limit):
-        row_slided, reward = slide_row_left(row=row)
+        row_slided, reward = slide_row(row=row, action=action)
 
-        row_left.append(row_slided)
+        row_action.append(row_slided)
         row_reward.append(reward)
 
-    return row_left, row_reward
+    return row_action, row_reward
 
 
 # tables, calculées au chargement du module par un seul appel à build_row_tables.
-ROW_LEFT: list[int] = []
-"""``ROW_LEFT[row]`` : la ligne ``row`` après un glissement à gauche."""
+"""``ROW_ACTION_LEFT[row]`` : la ligne ``row`` après un glissement à gauche."""
+"""``ROW_REWARD_LEFT[row]`` : les points gagnés par ce glissement."""
 
-ROW_REWARD: list[int] = []
-"""``ROW_REWARD[row]`` : les points gagnés par ce glissement."""
-
-ROW_LEFT, ROW_REWARD = build_row_tables()
+ROW_ACTION_LEFT, ROW_REWARD_LEFT = build_row_tables(action=Action.LEFT)
+ROW_ACTION_RIGHT, ROW_REWARD_RIGHT = build_row_tables(action=Action.RIGHT)
 
 
 def slide_bits(bits: Bitboard, action: int) -> tuple[Bitboard, int]:
@@ -327,7 +338,8 @@ def slide_bits(bits: Bitboard, action: int) -> tuple[Bitboard, int]:
     :func:`transpose` ramène le haut et le bas à la gauche et à la droite.
     """
 
-    bits = orient(bits=bits, action=action)
+    if action == Action.UP or action == Action.DOWN:
+        bits = transpose(bits=bits)
 
     reward = 0
     bits_slided = 0
@@ -335,41 +347,19 @@ def slide_bits(bits: Bitboard, action: int) -> tuple[Bitboard, int]:
         k = i * ROW_BITS
         row = (bits >> k) & ROW_MASK
 
-        row_slided = ROW_LEFT[row]
-        reward += ROW_REWARD[row]
+        if action == Action.LEFT or action == Action.UP:
+            row_slided = ROW_ACTION_LEFT[row]
+            reward += ROW_REWARD_LEFT[row]
+        else:
+            row_slided = ROW_ACTION_RIGHT[row]
+            reward += ROW_REWARD_RIGHT[row]
 
         bits_slided = bits_slided | (row_slided << k)
 
-    bits_slided = unorient(bits=bits_slided, action=action)
+    if action == Action.UP or action == Action.DOWN:
+        bits_slided = transpose(bits=bits_slided)
 
     return bits_slided, reward
-
-
-def orient(bits: Bitboard, action: int) -> Bitboard:
-    """Réoriente le plateau pour que ``action`` devienne un glissement à gauche."""
-    if action == Action.UP or action == Action.DOWN:
-        bits = transpose(bits)
-
-    if action == Action.RIGHT or action == Action.DOWN:
-        for i in range(BOARD_SIZE):
-            k = i * ROW_BITS
-            row = reverse_row(row=(bits >> k) & ROW_MASK)
-            bits = bits & ~(ROW_MASK << k) | (row << k)
-
-    return bits
-
-
-def unorient(bits: Bitboard, action: int) -> Bitboard:
-    if action == Action.RIGHT or action == Action.DOWN:
-        for i in range(BOARD_SIZE):
-            k = i * ROW_BITS
-            row = reverse_row(row=(bits >> k) & ROW_MASK)
-            bits = bits & ~(ROW_MASK << k) | (row << k)
-
-    if action == Action.UP or action == Action.DOWN:
-        bits = transpose(bits)
-
-    return bits
 
 
 def legal_actions_bits(bits: Bitboard) -> ActionMask:

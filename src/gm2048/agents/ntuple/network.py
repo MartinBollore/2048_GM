@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from gm2048.engine.bitboard import CELL_BITS, CELL_MASK, MAX_EXPONENT, Bitboard
+from gm2048.engine.bitboard import CELL_BITS, CELL_MASK, Bitboard
 from gm2048.engine.board import BOARD_SIZE
 
 Tuple = tuple[int, ...]
@@ -120,7 +120,7 @@ class NTupleNetwork:
                 raise ValueError(
                     "Un tuple a un nombre d'éléments supérieur au nombre maximal autorisé"
                 )
-            elif min(t) < 0 or max(t) >= BOARD_SIZE ** 2:
+            elif min(t) < 0 or max(t) >= BOARD_SIZE**2:
                 raise ValueError(
                     "Certains indices dans les tuples sont soient inférieur à 0 "
                     "ou supérieur à MAX_EXPONENT"

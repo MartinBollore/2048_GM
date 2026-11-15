@@ -21,18 +21,18 @@ NumPy serait trop lent pour des milliers de parties.
 
 from __future__ import annotations
 
+import math
+import time
 from dataclasses import dataclass
+
+import numpy as np
 
 from gm2048.agents.ntuple.network import NTupleNetwork
 from gm2048.engine import max_tile
-from gm2048.engine.bitboard import Bitboard, slide_bits, spawn_bits, from_bitboard
-from gm2048.engine.board import Action
+from gm2048.engine.bitboard import Bitboard, from_bitboard, slide_bits, spawn_bits
+from gm2048.engine.board import ACTIONS, Action
 from gm2048.evaluation import GameResult
 
-from gm2048.engine.board import ACTIONS
-import math
-import numpy as np
-import time
 
 @dataclass(frozen=True, slots=True)
 class Move:
@@ -87,6 +87,7 @@ def best_move(net: NTupleNetwork, bits: Bitboard) -> Move | None:
     else:
         return None
 
+
 def td_update(
     net: NTupleNetwork, afterstate: Bitboard, next_move: Move | None, alpha: float
 ) -> float:
@@ -104,15 +105,13 @@ def td_update(
     multiplication par ``alpha``.
     """
 
-    if next_move is not None:
-        cible = next_move.reward + net.value(bits=next_move.afterstate)
-    else:
-        cible = 0
+    cible = next_move.reward + net.value(bits=next_move.afterstate) if next_move is not None else 0
 
     delta = cible - net.value(bits=afterstate)
     net.update(bits=afterstate, delta=alpha * delta)
 
     return delta
+
 
 def play_and_learn(net: NTupleNetwork, alpha: float, seed: int) -> GameResult:
     """Joue une partie complète avec ``best_move`` en apprenant après chaque coup.
@@ -162,10 +161,8 @@ def play_and_learn(net: NTupleNetwork, alpha: float, seed: int) -> GameResult:
     time_elapse = time.perf_counter() - start
 
     board = from_bitboard(bits=bits)
-    result = GameResult(seed=seed,
-                        score=score,
-                        max_tile=max_tile(board=board),
-                        moves=nb_moves,
-                        seconds=time_elapse)
+    result = GameResult(
+        seed=seed, score=score, max_tile=max_tile(board=board), moves=nb_moves, seconds=time_elapse
+    )
 
     return result

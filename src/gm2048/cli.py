@@ -408,3 +408,96 @@ def benchmark(
     else:
         output.write_text(text + "\n", encoding="utf-8")
         typer.echo(f"Tableau écrit dans {output}", err=True)
+
+
+@app.command("train")
+def train_(
+    out: Annotated[
+        Path,
+        typer.Option(file_okay=False, help="Dossier de l'entraînement : poids, état et journal."),
+    ],
+    games: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="Nombre total de parties (100 000 par défaut). Avec --resume, "
+            "prolonge l'entraînement jusqu'à ce total.",
+        ),
+    ] = None,
+    alpha: Annotated[float, typer.Option(help="Taux d'apprentissage.")] = 0.1,
+    seed: Annotated[int, typer.Option(help="Graine de la première partie.")] = 0,
+    checkpoint_every: Annotated[
+        int, typer.Option(min=1, help="Une sauvegarde toutes les N parties.")
+    ] = 5_000,
+    log_every: Annotated[
+        int, typer.Option(min=1, help="Une ligne de journal toutes les N parties.")
+    ] = 1_000,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Reprendre l'entraînement enregistré dans --out.")
+    ] = False,
+) -> None:
+    """Entraîner un réseau n-tuple par apprentissage TD."""
+    from collections import deque
+
+    from gm2048.training.loop import STATE_FILE, TrainingConfig, load_state
+    from gm2048.training.loop import resume as resume_training
+    from gm2048.training.loop import train as start_training
+
+    if resume:
+        if not (out / STATE_FILE).exists():
+            raise typer.BadParameter(
+                f"aucun entraînement à reprendre dans {str(out)!r}.", param_hint="--out"
+            )
+        config, done = load_state(out)
+        target = config.games if games is None else games
+        if target < done:
+            raise typer.BadParameter(
+                f"l'entraînement a déjà joué {done} parties.", param_hint="--games"
+            )
+    else:
+        if (out / STATE_FILE).exists():
+            raise typer.BadParameter(
+                f"{str(out)!r} contient déjà un entraînement : ajoute --resume pour le "
+                "reprendre, ou choisis un autre dossier.",
+                param_hint="--out",
+            )
+        try:
+            config = TrainingConfig(
+                games=100_000 if games is None else games,
+                alpha=alpha,
+                seed=seed,
+                checkpoint_every=checkpoint_every,
+                log_every=log_every,
+            )
+        except ValueError as error:
+            raise typer.BadParameter(str(error)) from error
+        done, target = 0, config.games
+
+    recent: deque[int] = deque(maxlen=config.log_every)
+
+    def show_info(_: GameResult | None) -> str | None:
+        if not recent:
+            return None
+        return f"score moyen des {len(recent)} dernières parties : {sum(recent) / len(recent):.0f}"
+
+    with typer.progressbar(
+        length=target - done,
+        label="Entraînement",
+        show_pos=True,
+        item_show_func=show_info,
+        file=sys.stderr,
+    ) as bar:
+
+        def on_game_done(result: GameResult) -> None:
+            recent.append(result.score)
+            bar.current_item = result
+            bar.update(1)
+
+        if resume:
+            resume_training(out, games=games, on_game_done=on_game_done)
+        else:
+            start_training(config, out, on_game_done=on_game_done)
+
+    typer.echo(
+        f"{target} parties jouées. Poids : {out / 'weights.npz'}, journal : {out / 'log.csv'}"
+    )

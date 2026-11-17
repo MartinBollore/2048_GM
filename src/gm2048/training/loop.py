@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
@@ -40,7 +40,18 @@ STATE_FILE = "state.json"
 LOG_FILE = "log.csv"
 """Le journal de l'entraînement."""
 
-LOG_COLUMNS = ("games", "mean_score", "win_rate", "mean_moves", "seconds")
+REACH_TILES = (128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768)
+"""Les tuiles dont le journal suit la part de parties qui les atteignent."""
+
+LOG_COLUMNS = (
+    "games",
+    "mean_score",
+    "win_rate",
+    "mean_moves",
+    "seconds",
+    "max_score",
+    *(f"reach_{tile}" for tile in REACH_TILES),
+)
 """Les colonnes du journal, dans l'ordre. Chaque ligne résume un bloc de parties :
 
 - ``games`` : le nombre total de parties jouées à la fin du bloc (1000, 2000, ...) ;
@@ -48,7 +59,14 @@ LOG_COLUMNS = ("games", "mean_score", "win_rate", "mean_moves", "seconds")
 - ``win_rate`` : la part des parties du bloc qui ont atteint 2048 (entre 0 et 1,
   avec ``WIN_TILE`` de ``gm2048.evaluation``) ;
 - ``mean_moves`` : le nombre moyen de coups par partie du bloc ;
-- ``seconds`` : la durée totale des parties du bloc (la somme de leurs ``seconds``).
+- ``seconds`` : la durée totale des parties du bloc (la somme de leurs ``seconds``) ;
+- ``max_score`` : le meilleur score du bloc ;
+- ``reach_128`` à ``reach_32768`` : la part des parties du bloc dont la plus grande
+  tuile atteint au moins cette valeur (entre 0 et 1).
+
+Les journaux écrits avant l'ajout de ``max_score`` et des ``reach_*`` n'ont que les
+cinq premières colonnes : :func:`read_log` les lit quand même, et :func:`resume`
+ajoute les colonnes manquantes, vides pour les anciennes lignes.
 """
 
 
@@ -105,6 +123,39 @@ def load_state(out_dir: Path) -> tuple[TrainingConfig, int]:
     return TrainingConfig(**raw), int(state["games_done"])
 
 
+def _log_row(games_done: int, block: Sequence[GameResult]) -> list[float]:
+    """La ligne du journal qui résume ``block``, terminé après ``games_done`` parties."""
+    n = len(block)
+    return [
+        games_done,
+        sum(r.score for r in block) / n,
+        sum(r.max_tile >= WIN_TILE for r in block) / n,
+        sum(r.moves for r in block) / n,
+        sum(r.seconds for r in block),
+        max(r.score for r in block),
+        *(sum(r.max_tile >= tile for r in block) / n for tile in REACH_TILES),
+    ]
+
+
+def read_log(out_dir: Path) -> list[dict[str, float | None]]:
+    """Lit ``log.csv`` : une ligne par bloc, sous la forme ``{colonne: valeur}``.
+
+    Toutes les colonnes de :data:`LOG_COLUMNS` sont présentes. Une colonne absente du
+    fichier (journal d'une version précédente) ou vide vaut ``None``. Un fichier qui
+    n'existe pas encore donne une liste vide.
+    """
+    path = out_dir / LOG_FILE
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8") as log:
+        rows = list(csv.DictReader(log))
+    return [{column: _number(row.get(column)) for column in LOG_COLUMNS} for row in rows]
+
+
+def _number(text: str | None) -> float | None:
+    return float(text) if text else None
+
+
 def _run(
     net: NTupleNetwork,
     config: TrainingConfig,
@@ -123,16 +174,7 @@ def _run(
             done = i + 1
             last = done == config.games
             if done % config.log_every == 0 or last:
-                n = len(block)
-                writer.writerow(
-                    [
-                        done,
-                        sum(r.score for r in block) / n,
-                        sum(r.max_tile >= WIN_TILE for r in block) / n,
-                        sum(r.moves for r in block) / n,
-                        sum(r.seconds for r in block),
-                    ]
-                )
+                writer.writerow(_log_row(done, block))
                 log.flush()  # la ligne survit même à un processus tué
                 block = []
             if done % config.checkpoint_every == 0 or last:
@@ -215,8 +257,13 @@ def resume(
     with log_path.open(newline="", encoding="utf-8") as log:
         header, *rows = csv.reader(log)
     kept = [row for row in rows if int(row[0]) <= games_done]
+    if tuple(header) != LOG_COLUMNS:
+        # Journal d'une version précédente : on ajoute les colonnes qui lui manquent,
+        # vides pour les lignes déjà écrites.
+        position = {column: i for i, column in enumerate(header)}
+        kept = [[row[position[c]] if c in position else "" for c in LOG_COLUMNS] for row in kept]
     with log_path.open("w", newline="", encoding="utf-8") as log:
-        csv.writer(log).writerows([header, *kept])
+        csv.writer(log).writerows([LOG_COLUMNS, *kept])
 
     _save(net, config, games_done, out_dir)  # enregistre tout de suite un nouveau total
     return _run(net, config, games_done, out_dir, on_game_done)

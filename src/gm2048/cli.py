@@ -435,6 +435,13 @@ def train_(
     resume: Annotated[
         bool, typer.Option("--resume", help="Reprendre l'entraînement enregistré dans --out.")
     ] = False,
+    plot: Annotated[
+        bool,
+        typer.Option(
+            "--plot",
+            help="Ouvrir aussi une fenêtre avec les courbes en direct (comme gm2048 plot).",
+        ),
+    ] = False,
 ) -> None:
     """Entraîner un réseau n-tuple par apprentissage TD."""
     from collections import deque
@@ -473,6 +480,9 @@ def train_(
             raise typer.BadParameter(str(error)) from error
         done, target = 0, config.games
 
+    if plot:
+        open_plot_window(out)
+
     recent: deque[int] = deque(maxlen=config.log_every)
 
     def show_info(_: GameResult | None) -> str | None:
@@ -501,3 +511,63 @@ def train_(
     typer.echo(
         f"{target} parties jouées. Poids : {out / 'weights.npz'}, journal : {out / 'log.csv'}"
     )
+
+
+MATPLOTLIB_MISSING: Final = (
+    'les courbes ont besoin de matplotlib. Installe-le avec : pip install -e ".[gui]"'
+)
+
+
+def open_plot_window(out: Path) -> None:
+    """Lance ``gm2048 plot out`` dans un processus à part.
+
+    La fenêtre vit sa vie : elle relit le journal pendant que l'entraînement tourne, et
+    reste ouverte quand il se termine. Elle ne reçoit pas le Ctrl+C qui coupe
+    l'entraînement (nouveau groupe de processus sous Windows, nouvelle session
+    ailleurs), et sa sortie est jetée pour ne pas brouiller la barre de progression.
+    """
+    import subprocess
+
+    if importlib.util.find_spec("matplotlib") is None:
+        raise typer.BadParameter(MATPLOTLIB_MISSING, param_hint="--plot")
+    command = [sys.executable, "-m", "gm2048", "plot", str(out)]
+    quiet = subprocess.DEVNULL
+    if sys.platform == "win32":
+        subprocess.Popen(
+            command,
+            stdin=quiet,
+            stdout=quiet,
+            stderr=quiet,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    else:
+        subprocess.Popen(command, stdin=quiet, stdout=quiet, stderr=quiet, start_new_session=True)
+
+
+@app.command("plot")
+def plot_(
+    runs: Annotated[
+        list[Path],
+        typer.Argument(
+            file_okay=False,
+            help="Dossier(s) d'entraînement, par exemple runs/alpha-0.1. "
+            "Plusieurs dossiers : leurs courbes sont superposées.",
+        ),
+    ],
+    interval: Annotated[
+        float, typer.Option(min=0.2, help="Secondes entre deux relectures des journaux.")
+    ] = 2.0,
+) -> None:
+    """Afficher les courbes d'entraînements, mises à jour en direct.
+
+    Score moyen, meilleur score et part des parties qui atteignent chaque tuile.
+    La fenêtre relit log.csv régulièrement : elle suit un entraînement en cours.
+    """
+    try:
+        from gm2048.training.plot import show_training
+    except ModuleNotFoundError as error:
+        if error.name is None or not error.name.startswith("matplotlib"):
+            raise
+        typer.echo(f"Erreur : {MATPLOTLIB_MISSING}", err=True)
+        raise typer.Exit(1) from error
+    show_training(runs, interval)

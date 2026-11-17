@@ -286,6 +286,7 @@ def best_move_fast(weights, cells, bits):
 
     return best_action, best_afterstate, best_reward
 
+
 @njit(cache=True)
 def play_and_learn_fast(weights, cells, alpha, rng):
     """``play_and_learn`` compilé : renvoie ``(score, nombre de coups, plateau final)``.

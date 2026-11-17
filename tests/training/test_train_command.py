@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -109,3 +111,49 @@ def test_cli_train_says_where_the_files_are(tmp_path: Path) -> None:
     result = runner.invoke(app, ["train", "--out", str(out), *OPTIONS])
     assert result.exit_code == 0, result.output
     assert WEIGHTS_FILE in result.stdout
+
+
+# --- La fenêtre de courbes ----------------------------------------------------------
+
+
+def test_cli_train_plot_opens_the_window_in_another_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched: list[list[str]] = []
+
+    def fake_popen(command: list[str], **kwargs: object) -> None:
+        launched.append(command)
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    out = tmp_path / "run"
+    result = CliRunner().invoke(app, ["train", "--out", str(out), *OPTIONS, "--plot"])
+    assert result.exit_code == 0, result.output
+    assert launched == [[sys.executable, "-m", "gm2048", "plot", str(out)]]
+    assert load_state(out) == (CONFIG, 30)
+
+
+def test_cli_train_without_plot_opens_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "Popen", lambda command, **kwargs: launched.append(command))
+    result = CliRunner().invoke(app, ["train", "--out", str(tmp_path / "run"), *OPTIONS])
+    assert result.exit_code == 0, result.output
+    assert launched == []
+
+
+def test_cli_plot_shows_the_given_trainings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gm2048.training import plot
+
+    shown: list[tuple[list[Path], float]] = []
+
+    def fake_show(runs: list[Path], interval: float) -> None:
+        shown.append((runs, interval))
+
+    monkeypatch.setattr(plot, "show_training", fake_show)
+    a, b = tmp_path / "a", tmp_path / "b"
+    result = CliRunner().invoke(app, ["plot", str(a), str(b), "--interval", "5"])
+    assert result.exit_code == 0, result.output
+    assert shown == [([a, b], 5.0)]

@@ -25,8 +25,9 @@ Puis installer le projet avec ses outils de développement :
 pip install -e ".[dev]"
 ```
 
-Cela installe aussi [pygame-ce](https://pyga.me/), qui sert à la fenêtre graphique. Pour installer
-seulement le jeu et sa fenêtre, sans les outils de développement : `pip install -e ".[gui]"`.
+Cela installe aussi [pygame-ce](https://pyga.me/), qui sert à la fenêtre graphique, et
+[matplotlib](https://matplotlib.org/), qui trace les courbes d'entraînement. Pour installer
+seulement le jeu et ses fenêtres, sans les outils de développement : `pip install -e ".[gui]"`.
 
 ## Jouer
 
@@ -98,6 +99,26 @@ le score moyen, le meilleur score et la meilleure tuile obtenus jusque-là. Elle
 | expectimax (Profondeur 2) | 500 | 19423 | 16260 | 60124 | 99.4% | 88.6% | 33.8% | 0.6% | 101.31 |
 
 
+## Entraîner le réseau n-tuple
+
+```bash
+gm2048 train --out runs/ntuple-1                       # 100 000 parties, alpha = 0,1
+gm2048 train --out runs/ntuple-1 --resume              # reprendre après un Ctrl+C
+gm2048 train --out runs/ntuple-1 --resume --games 200000   # prolonger
+gm2048 train --out runs/ntuple-2 --alpha 0.2 --plot    # avec les courbes en direct
+```
+
+Chaque entraînement vit dans son dossier : `weights.npz` (les poids), `state.json` (où il en est)
+et `log.csv` (une ligne par bloc de 1 000 parties : score moyen, meilleur score, part des parties
+qui atteignent chaque tuile…). Un entraînement coupé puis repris donne exactement les mêmes poids
+qu'un entraînement fait d'une traite.
+
+`gm2048 plot` affiche les courbes d'un ou plusieurs entraînements, et les met à jour pendant qu'ils
+tournent dans un autre terminal :
+
+```bash
+gm2048 plot runs/alpha-0.1 runs/alpha-0.2
+```
 
 ## Tests et qualité
 

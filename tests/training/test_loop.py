@@ -23,6 +23,7 @@ from gm2048.training.fast import play_and_learn_numba
 from gm2048.training.loop import (
     LOG_COLUMNS,
     LOG_FILE,
+    REACH_TILES,
     STATE_FILE,
     WEIGHTS_FILE,
     TrainingConfig,
@@ -30,6 +31,7 @@ from gm2048.training.loop import (
     resume,
     train,
 )
+from gm2048.training.loop import read_log as read_log_rows
 
 SMALL = TrainingConfig(games=60, alpha=0.1, seed=3, checkpoint_every=20, log_every=10)
 MIXED_TUPLES = ((0, 1, 2, 3), (0, 1, 4), (5, 6, 9, 10))
@@ -165,7 +167,7 @@ def test_train_writes_one_log_line_per_block(tmp_path: Path) -> None:
     assert [int(row[0]) for row in rows[1:]] == [10, 20, 30, 40, 50, 60]
     for k, row in enumerate(rows[1:]):
         block = results[10 * k : 10 * (k + 1)]
-        _games, mean_score, win_rate, mean_moves, seconds = row
+        _games, mean_score, win_rate, mean_moves, seconds = row[:5]
         assert float(mean_score) == pytest.approx(sum(r.score for r in block) / 10)
         assert float(win_rate) == pytest.approx(sum(r.max_tile >= 2048 for r in block) / 10)
         assert float(mean_moves) == pytest.approx(sum(r.moves for r in block) / 10)
@@ -194,11 +196,88 @@ def test_train_log_statistics_on_invented_games(
     train(config, tmp_path / "run")
     rows = read_log(tmp_path / "run")
     assert [int(row[0]) for row in rows[1:]] == [5, 8]
-    first, last = ([float(x) for x in row[1:]] for row in rows[1:])
+    first, last = ([float(x) for x in row[1:5]] for row in rows[1:])
     # Parties 0 à 4 : 2048, 4096 et 2048 comptent comme gagnées, 1024 et 512 non.
     assert first == pytest.approx([3000.0, 3 / 5, 20.0, 2.5])
     # Parties 5 à 7 (seed % 5 = 0, 1, 2) : 1024, 2048, 4096.
     assert last == pytest.approx([2000.0, 2 / 3, 10.0, 1.5])
+
+
+def test_train_logs_the_max_score_and_the_tiles_reached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tiles = [1024, 2048, 4096, 512, 2048]
+
+    def fake_play_and_learn(net: NTupleNetwork, alpha: float, seed: int) -> GameResult:
+        k = seed % 5
+        return GameResult(seed=seed, score=1000 * (k + 1), max_tile=tiles[k], moves=1)
+
+    monkeypatch.setattr(loop, "play_and_learn_numba", fake_play_and_learn)
+    train(TrainingConfig(games=5, checkpoint_every=5, log_every=5), tmp_path / "run")
+    (row,) = read_log_rows(tmp_path / "run")
+    assert row["max_score"] == 5000
+    reach = {tile: row[f"reach_{tile}"] for tile in REACH_TILES}
+    assert reach == {
+        128: 1.0,
+        256: 1.0,
+        512: 1.0,
+        1024: 4 / 5,
+        2048: 3 / 5,
+        4096: 1 / 5,
+        8192: 0.0,
+        16384: 0.0,
+        32768: 0.0,
+    }
+    assert row["reach_2048"] == row["win_rate"]
+
+
+def test_read_log_gives_one_dict_per_block(tmp_path: Path) -> None:
+    train(dataclasses.replace(SMALL, games=35), tmp_path / "run")
+    rows = read_log_rows(tmp_path / "run")
+    assert [row["games"] for row in rows] == [10, 20, 30, 35]
+    assert all(set(row) == set(LOG_COLUMNS) for row in rows)
+    assert all(value is not None for row in rows for value in row.values())
+
+
+def test_read_log_of_a_missing_training_is_empty(tmp_path: Path) -> None:
+    assert read_log_rows(tmp_path / "nothing") == []
+
+
+def make_old_log(out_dir: Path) -> None:
+    """Réécrit le journal de ``out_dir`` comme l'écrivait la version précédente."""
+    rows = read_log(out_dir)
+    with (out_dir / LOG_FILE).open("w", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerows([row[:5] for row in rows])
+
+
+def test_read_log_accepts_an_old_log(tmp_path: Path) -> None:
+    out = tmp_path / "run"
+    train(dataclasses.replace(SMALL, games=20), out)
+    make_old_log(out)
+    rows = read_log_rows(out)
+    assert [row["games"] for row in rows] == [10, 20]
+    assert all(row["max_score"] is None and row["reach_2048"] is None for row in rows)
+    assert all(row["mean_score"] is not None for row in rows)
+
+
+def test_resume_completes_the_columns_of_an_old_log(tmp_path: Path) -> None:
+    out = tmp_path / "run"
+    with pytest.raises(Interrupt):
+        train(SMALL, out, on_game_done=interrupt_after(30))
+    make_old_log(out)
+    resume(out)
+    rows = read_log(out)
+    assert tuple(rows[0]) == LOG_COLUMNS
+    assert all(len(row) == len(LOG_COLUMNS) for row in rows)
+    parsed = read_log_rows(out)
+    assert [row["games"] for row in parsed] == [10, 20, 30, 40, 50, 60]
+    # Les lignes d'avant la reprise n'ont pas les nouvelles colonnes ; les suivantes, si.
+    assert [row["max_score"] is None for row in parsed] == [True, True, False, False, False, False]
+    # Le reste du journal est celui d'un entraînement d'une traite.
+    train(SMALL, tmp_path / "straight")
+    straight = read_log_rows(tmp_path / "straight")
+    for a, b in zip(parsed, straight, strict=True):
+        assert a["mean_score"] == b["mean_score"]
 
 
 def test_train_logs_the_last_incomplete_block(tmp_path: Path) -> None:

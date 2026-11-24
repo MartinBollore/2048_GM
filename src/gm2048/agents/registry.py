@@ -27,12 +27,14 @@ from typing import Final
 
 from gm2048.agents.base import Agent
 from gm2048.agents.baselines import ExpectimaxAgent, GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.agents.ntuple import NTupleAgent
 
 AGENTS: Final[dict[str, Callable[..., Agent]]] = {
     "random": RandomAgent,
     "greedy": GreedyAgent,
     "heuristic": HeuristicAgent,
     "expectimax": ExpectimaxAgent,
+    "ntuple": NTupleAgent,
 }
 """Les agents du projet : nom → classe de l'agent.
 

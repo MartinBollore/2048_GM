@@ -35,11 +35,11 @@ Weights = npt.NDArray[np.float32]
 """Une table de poids : un tableau NumPy à une dimension, en float32."""
 
 DEFAULT_TUPLES: tuple[Tuple, ...] = (
-    (0, 1, 2, 3),  # la ligne du haut, le long du bord
-    (4, 5, 6, 7),  # la deuxième ligne
-    (0, 1, 4, 5),  # le carré 2x2 du coin
-    (1, 2, 5, 6),  # le carré 2x2 du milieu du bord
-    (5, 6, 9, 10),  # le carré 2x2 du centre
+    (0, 1, 2, 3, 4),  # la ligne du haut, le long du bord
+    (3, 4, 5, 6, 7),  # la deuxième ligne
+    (0, 1, 2, 4, 5),  # le carré 2x2 du coin
+    (0, 1, 2, 5, 6),  # le carré 2x2 du milieu du bord
+    (0, 5, 6, 9, 10),  # le carré 2x2 du centre
 )
 """Les tuples par défaut : 2 lignes et 3 carrés, qui couvrent tout le plateau par symétrie."""
 

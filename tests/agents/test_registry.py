@@ -13,6 +13,9 @@ import sys
 import pytest
 
 from gm2048.agents.baselines import ExpectimaxAgent, GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.agents.ntuple import NTupleNetwork
+from gm2048.agents.ntuple import agent as ntuple_agent
+from gm2048.agents.ntuple.agent import NTupleAgent
 from gm2048.agents.registry import AGENTS, DEPTH_AGENTS, make_agent
 from gm2048.engine import Game
 
@@ -21,13 +24,26 @@ EXPECTED_CLASSES = {
     "greedy": GreedyAgent,
     "heuristic": HeuristicAgent,
     "expectimax": ExpectimaxAgent,
+    "ntuple": NTupleAgent,
 }
+
+
+@pytest.fixture(autouse=True)
+def ntuple_weights(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L'agent n-tuple lit ses poids dans models/ntuple.npz, qui n'existe pas forcément
+    (sur GitHub par exemple) : ici, il lit ceux d'un réseau neuf."""
+    path = tmp_path_factory.getbasetemp() / "ntuple-registry.npz"
+    if not path.exists():
+        NTupleNetwork().save(path)
+    monkeypatch.setattr(ntuple_agent, "DEFAULT_WEIGHTS", path)
 
 
 # --- Le contenu du registre ---------------------------------------------------------
 
 
-def test_the_registry_lists_the_four_agents() -> None:
+def test_the_registry_lists_the_five_agents() -> None:
     assert set(AGENTS) == set(EXPECTED_CLASSES)
 
 

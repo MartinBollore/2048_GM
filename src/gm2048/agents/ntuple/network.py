@@ -6,8 +6,9 @@ milliards). À la place, il regarde de petits groupes de cases, les « tuples »
 garde une note pour chaque motif possible de chaque tuple.
 
 Un tuple de 4 cases a 16 ** 4 = 65 536 motifs possibles, puisque chaque case contient
-un exposant de 0 à 15. Sa table a donc 65 536 poids. Le motif lu sur le plateau sert
-d'indice dans la table, et la note du plateau est la somme des poids lus.
+un exposant de 0 à 15. Sa table a donc 65 536 poids. Les tuples par défaut ont 5 cases :
+16 ** 5 = 1 048 576 poids par table. Le motif lu sur le plateau sert d'indice dans la
+table, et la note du plateau est la somme des poids lus.
 
 Chaque tuple est lu sur les 8 symétries du plateau (4 rotations et leurs miroirs) :
 un bon motif dans un coin est aussi bon dans les trois autres. Avec 5 tuples, le
@@ -35,13 +36,18 @@ Weights = npt.NDArray[np.float32]
 """Une table de poids : un tableau NumPy à une dimension, en float32."""
 
 DEFAULT_TUPLES: tuple[Tuple, ...] = (
-    (0, 1, 2, 3, 4),  # la ligne du haut, le long du bord
-    (3, 4, 5, 6, 7),  # la deuxième ligne
-    (0, 1, 2, 4, 5),  # le carré 2x2 du coin
-    (0, 1, 2, 5, 6),  # le carré 2x2 du milieu du bord
-    (0, 5, 6, 9, 10),  # le carré 2x2 du centre
+    (0, 1, 2, 3, 4),  # la ligne du haut et la première case de la deuxième ligne
+    (3, 4, 5, 6, 7),  # la deuxième ligne et le coin en haut à droite
+    (0, 1, 2, 4, 5),  # le carré 2x2 du coin et la case 2
+    (0, 1, 2, 5, 6),  # le carré 2x2 du milieu du bord et le coin 0
+    (0, 5, 6, 9, 10),  # le carré 2x2 du centre et le coin 0
 )
-"""Les tuples par défaut : 2 lignes et 3 carrés, qui couvrent tout le plateau par symétrie."""
+"""Les tuples par défaut, à 5 cases : 2 lignes et 3 carrés plus une case chacun.
+
+Ce sont ceux du meilleur modèle de la phase 3. Les premiers tuples, à 4 cases, plafonnaient
+vers 40 000 points : ``(0, 1, 2, 3)``, ``(4, 5, 6, 7)``, ``(0, 1, 4, 5)``, ``(1, 2, 5, 6)``
+et ``(5, 6, 9, 10)``.
+"""
 
 MAX_TUPLE_LENGTH = 6
 """Au-delà de 6 cases, une table dépasse 268 millions de poids (plus d'1 Go)."""

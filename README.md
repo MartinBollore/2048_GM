@@ -91,12 +91,12 @@ le score moyen, le meilleur score et la meilleure tuile obtenus jusque-là. Elle
 ## Benchmark
 
 | Agent | Parties | Score moyen | Score médian | Score max | ≥ 512 | ≥ 1024 | ≥ 2048 | ≥ 4096 | ≥ 8192 | ms par coup |
-| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |---|
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | random | 1000 | 1104 | 1056 | 4700 | 0.1% | 0.0% | 0.0% | 0.0% | 0.0% | 0.66 |
 | greedy | 1000 | 1961 | 1636 | 5832 | 2.1% | 0.0% | 0.0% | 0.0% | 0.0% | 0.82 |
 | heuristic | 1000 | 11545 | 11146 | 37300 | 89.4% | 56.7% | 9.2% | 0.0% | 0.0% | 1.11 |
 | expectimax (Profondeur 1) | 1000 | 18235 | 16368 | 59236 | 97.4% | 81.4% | 31.8% | 0.7% | 0.0% | 4.66 |
-| expectimax (Profondeur 2) | 500 | 19423 | 16260 | 60124 | 99.4% | 88.6% | 33.8% | 0.6% | 0.0% | 101.31 | 
+| expectimax (Profondeur 2) | 500 | 19423 | 16260 | 60124 | 99.4% | 88.6% | 33.8% | 0.6% | 0.0% | 101.31 |
 | ntuple (5-size tuples)    | 1000 | 91405 | 80368 | 175980 | 99.7% | 98.5% | 94.0% | 78.9% | 45.1% | 0.69 |
 
 
@@ -113,6 +113,9 @@ Chaque entraînement vit dans son dossier : `weights.npz` (les poids), `state.js
 et `log.csv` (une ligne par bloc de 1 000 parties : score moyen, meilleur score, part des parties
 qui atteignent chaque tuile…). Un entraînement coupé puis repris donne exactement les mêmes poids
 qu'un entraînement fait d'une traite.
+
+L'agent `ntuple` (`gm2048 watch --agent ntuple`, `gm2048 benchmark --agent ntuple`) joue avec
+`models/ntuple.npz` : copie-y le `weights.npz` de l'entraînement que tu veux utiliser.
 
 `gm2048 plot` affiche les courbes d'un ou plusieurs entraînements, et les met à jour pendant qu'ils
 tournent dans un autre terminal :

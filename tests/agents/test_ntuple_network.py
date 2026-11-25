@@ -123,7 +123,13 @@ def test_index_reads_the_exponents_of_the_cells(board: Board) -> None:
 
 
 def test_default_tuples() -> None:
-    assert DEFAULT_TUPLES == ((0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 4, 5), (1, 2, 5, 6), (5, 6, 9, 10))
+    assert DEFAULT_TUPLES == (
+        (0, 1, 2, 3, 4),
+        (3, 4, 5, 6, 7),
+        (0, 1, 2, 4, 5),
+        (0, 1, 2, 5, 6),
+        (0, 5, 6, 9, 10),
+    )
     assert NTupleNetwork().tuples == DEFAULT_TUPLES
 
 
@@ -131,13 +137,13 @@ def test_one_table_of_float32_zeros_per_tuple() -> None:
     net = NTupleNetwork()
     assert len(net.weights) == 5
     for w in net.weights:
-        assert w.shape == (16**4,)
+        assert w.shape == (16**5,)
         assert w.dtype == np.float32
         assert not w.any()
 
 
 def test_n_weights_counts_every_weight() -> None:
-    assert NTupleNetwork().n_weights == 5 * 65_536
+    assert NTupleNetwork().n_weights == 5 * 16**5
     assert NTupleNetwork([(0, 1, 2, 3, 4, 5), (0, 1)]).n_weights == 16**6 + 16**2
 
 
@@ -171,7 +177,7 @@ def test_40_weights_are_read_with_the_default_tuples(bits: int) -> None:
     assert len(features) == 5 * 8
     for table, index in features:
         assert 0 <= table < 5
-        assert 0 <= index < 65_536
+        assert 0 <= index < 16**5
 
 
 @given(bitboards)

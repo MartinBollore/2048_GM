@@ -11,14 +11,22 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=1.26",
     "typer>=0.12",
+    "gymnasium>=1.0",
+    "numba>=0.61",
 ]
 
 [project.optional-dependencies]
+gui = [
+    "pygame-ce>=2.5",
+    "matplotlib>=3.9",
+]
 dev = [
     "pytest>=8",
     "hypothesis>=6.100",
     "ruff>=0.6",
     "mypy>=1.10",
+    "pygame-ce>=2.5",
+    "matplotlib>=3.9",
 ]
 
 [project.scripts]
@@ -42,3 +50,15 @@ select = ["E", "F", "W", "I", "UP", "B", "SIM", "NPY", "RUF"]
 python_version = "3.12"
 files = ["src"]
 strict = true
+
+# Numba n'a pas d'annotations de types : mypy ne peut pas vérifier les fonctions
+# compilées avec @njit. On le laisse les accepter sans annotations dans ce module.
+[[tool.mypy.overrides]]
+module = ["numba", "numba.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "gm2048.training.fast"
+disallow_untyped_decorators = false
+disallow_untyped_defs = false
+disallow_untyped_calls = false

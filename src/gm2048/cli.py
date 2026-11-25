@@ -2,25 +2,41 @@
 
 from __future__ import annotations
 
+import importlib.util
+import io
 import os
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Annotated, Final, Literal
 
 import typer
 
 from gm2048.agents import Agent
-from gm2048.agents.baselines import GreedyAgent, HeuristicAgent, RandomAgent
+from gm2048.agents.registry import AGENTS, DEPTH_AGENTS, make_agent
+from gm2048.benchmark import markdown_table, run_benchmark
 from gm2048.engine import Action, Game, render
 from gm2048.evaluation import GameResult, evaluate, format_report
+from gm2048.gui.theme import THEMES
 
-AGENTS: Final[dict[str, Callable[[int | None], Agent]]] = {
-    "random": RandomAgent,
-    "greedy": GreedyAgent,
-    "heuristic": HeuristicAgent,
-}
-"""Les agents disponibles en ligne de commande : nom → fonction qui crée l'agent
-à partir d'une graine. Ajouter un agent ici le rend utilisable par ``gm2048 eval``."""
+
+def agent_factory(name: str, depth: int | None = None) -> Callable[[int | None], Agent]:
+    """Fonction qui crée l'agent ``name`` à partir d'une graine.
+
+    Sans ``depth``, l'agent garde ses réglages par défaut. Avec ``depth``, l'agent
+    doit faire partie de :data:`DEPTH_AGENTS`, sinon ``typer.BadParameter`` est levée.
+    """
+    if depth is None:
+        return AGENTS[name]
+    if name not in DEPTH_AGENTS:
+        raise typer.BadParameter(
+            f"l'agent {name!r} n'a pas de profondeur de recherche. "
+            f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
+            param_hint="--depth",
+        )
+
+    return lambda seed: make_agent(name, seed, depth)
+
 
 app = typer.Typer(
     help="2048 GM : moteur de jeu 2048 et IA capable d'y jouer.",
@@ -128,20 +144,88 @@ def main() -> None:
     """2048 GM : moteur de jeu 2048 et IA capable d'y jouer."""
 
 
+GUI_MISSING = (
+    'La fenêtre graphique a besoin de pygame-ce. Pour l\'installer :\n    pip install -e ".[gui]"'
+)
+
+THEME_NAMES: Final = tuple(THEMES)
+"""Les thèmes de la fenêtre."""
+
+ThemeOption = Annotated[
+    str, typer.Option(help=f"Thème de la fenêtre : {', '.join(THEME_NAMES)} (touche T).")
+]
+
+DepthOption = Annotated[
+    int | None,
+    typer.Option(
+        min=1,
+        help=f"Profondeur de recherche ({', '.join(DEPTH_AGENTS)} seulement). "
+        "Par défaut, celle de l'agent.",
+    ),
+]
+
+
+def _check_theme(theme: str) -> None:
+    if theme not in THEME_NAMES:
+        raise typer.BadParameter(
+            f"thème inconnu {theme!r}. Choix possibles : {', '.join(THEME_NAMES)}.",
+            param_hint="--theme",
+        )
+
+
+def _check_agent(agent: str) -> None:
+    if agent not in AGENTS:
+        raise typer.BadParameter(
+            f"agent inconnu {agent!r}. Choix possibles : {', '.join(AGENTS)}.",
+            param_hint="--agent",
+        )
+
+
+def _use_utf8_stdout() -> None:
+    """Fait écrire la sortie standard en UTF-8.
+
+    Sous Windows, quand la sortie est redirigée vers un fichier
+    (``gm2048 benchmark > benchmark.md``), Python l'encode par défaut en cp1252,
+    qui ne connaît pas certains caractères comme « ≥ » : l'affichage final
+    planterait, après des heures de calcul. On le règle donc dès le début.
+    """
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8")
+
+
+def _gui_available() -> bool:
+    """Vrai si pygame est installé (sans l'importer)."""
+    return importlib.util.find_spec("pygame") is not None
+
+
 @app.command()
 def play(
     seed: Annotated[
         int | None, typer.Option(help="Graine du hasard, pour rejouer la même partie.")
     ] = None,
+    terminal: Annotated[
+        bool,
+        typer.Option("--terminal", help="Jouer dans le terminal plutôt que dans une fenêtre."),
+    ] = False,
     line: Annotated[
         bool,
         typer.Option(
             "--line",
-            help="Saisie ligne par ligne (touche puis Entrée). Automatique hors d'un terminal.",
+            help="Dans le terminal, saisie ligne par ligne (touche puis Entrée). "
+            "Automatique hors d'un vrai terminal.",
         ),
     ] = False,
+    theme: ThemeOption = "clair",
 ) -> None:
-    """Jouer une partie au clavier dans le terminal."""
+    """Jouer une partie au clavier, dans une fenêtre animée (ou dans le terminal)."""
+    _check_theme(theme)
+    if not (terminal or line):
+        if _gui_available():
+            from gm2048.gui import window
+
+            window.play(seed=seed, theme=theme)
+            return
+        typer.echo(f"{GUI_MISSING}\nEn attendant, la partie se joue dans le terminal.", err=True)
     line_mode = line or not sys.stdin.isatty()
     play_loop(
         Game(seed=seed),
@@ -151,18 +235,43 @@ def play(
     )
 
 
+@app.command()
+def watch(
+    agent: Annotated[str, typer.Option(help=f"Agent à regarder : {', '.join(AGENTS)}.")] = (
+        "heuristic"
+    ),
+    seed: Annotated[
+        int, typer.Option(help="Graine de la première partie (les suivantes : +1, +2, …).")
+    ] = 0,
+    delay: Annotated[
+        float, typer.Option(min=0.0, help="Secondes entre deux coups (touches + et - en direct).")
+    ] = 0.2,
+    theme: ThemeOption = "clair",
+    depth: DepthOption = None,
+) -> None:
+    """Regarder un agent jouer, dans une fenêtre animée."""
+    _check_agent(agent)
+    _check_theme(theme)
+    make_agent = agent_factory(agent, depth)
+    if not _gui_available():
+        typer.echo(GUI_MISSING, err=True)
+        raise typer.Exit(code=1)
+    from gm2048.gui import window
+
+    window.watch(make_agent, seed=seed, delay=delay, theme=theme)
+
+
 @app.command("eval")
 def eval_(
     agent: Annotated[str, typer.Option(help=f"Agent à évaluer : {', '.join(AGENTS)}.")] = "random",
     games: Annotated[int, typer.Option(min=1, help="Nombre de parties à jouer.")] = 100,
     seed: Annotated[int, typer.Option(help="Graine de la première partie (et de l'agent).")] = 0,
+    depth: DepthOption = None,
 ) -> None:
     """Faire jouer un agent sur une série de parties et afficher ses résultats."""
-    if agent not in AGENTS:
-        raise typer.BadParameter(
-            f"agent inconnu {agent!r}. Choix possibles : {', '.join(AGENTS)}.",
-            param_hint="--agent",
-        )
+    _check_agent(agent)
+    make_agent = agent_factory(agent, depth)
+    label = f"Évaluation de {agent}" + ("" if depth is None else f" (profondeur {depth})")
     played: list[GameResult] = []
 
     def show_info(_: GameResult | None) -> str | None:
@@ -172,7 +281,7 @@ def eval_(
     # que le rapport, qu'on peut donc rediriger dans un fichier sans la barre.
     with typer.progressbar(
         length=games,
-        label=f"Évaluation de {agent}",
+        label=label,
         show_pos=True,
         item_show_func=show_info,
         file=sys.stderr,
@@ -184,15 +293,281 @@ def eval_(
             bar.update(1)
 
         report = evaluate(
-            AGENTS[agent](seed), n_games=games, first_seed=seed, on_game_done=on_game_done
+            make_agent(seed), n_games=games, first_seed=seed, on_game_done=on_game_done
         )
+    if depth is not None:
+        typer.echo(f"Profondeur de recherche : {depth}")
     typer.echo(format_report(report))
 
 
 def progress_info(played: Sequence[GameResult]) -> str | None:
-    """Texte affiché à droite de la barre : score moyen et meilleure tuile jusqu'ici."""
+    """Texte affiché à droite de la barre : score moyen, meilleur score et meilleure
+    tuile jusqu'ici."""
     if not played:
         return None
     mean = sum(result.score for result in played) / len(played)
-    best = max(result.max_tile for result in played)
-    return f"score moyen {mean:.0f}, meilleure tuile {best}"
+    best_score = max(result.score for result in played)
+    best_tile = max(result.max_tile for result in played)
+    return f"score moyen {mean:.0f}, meilleur score {best_score}, meilleure tuile {best_tile}"
+
+
+@app.command()
+def benchmark(
+    agent: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Agent à comparer ; répète l'option pour en mettre plusieurs. "
+            f"Par défaut, tous : {', '.join(AGENTS)}."
+        ),
+    ] = None,
+    games: Annotated[int, typer.Option(min=1, help="Nombre de parties par agent.")] = 100,
+    seed: Annotated[int, typer.Option(help="Graine de la première partie (et des agents).")] = 0,
+    depth: DepthOption = None,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            dir_okay=False,
+            help="Fichier où écrire le tableau (en UTF-8), au lieu de l'afficher. "
+            "Plus sûr que la redirection > sous PowerShell, qui abîme les accents.",
+        ),
+    ] = None,
+) -> None:
+    """Comparer plusieurs agents sur les mêmes parties et afficher un tableau Markdown.
+
+    Étape 7, à toi de jouer. Le comportement attendu :
+
+    - Sans ``--agent``, tous les agents du registre, dans l'ordre de ``AGENTS``.
+    - Un nom inconnu, ou un ``--depth`` alors qu'aucun agent choisi n'a de profondeur,
+      donne une erreur d'utilisation (``typer.BadParameter``), avant de jouer la
+      moindre partie. ``--depth`` ne s'applique qu'aux agents de ``DEPTH_AGENTS``.
+    - Les parties sont jouées par ``run_benchmark`` et le tableau produit par
+      ``markdown_table`` : importe-les depuis ``gm2048.benchmark`` sous ces noms.
+    - Une barre de progression sur la sortie d'erreur, comme dans ``eval_``, avec une
+      étape par partie jouée (tous agents confondus).
+    - Sur la sortie standard, uniquement le tableau, précédé de la ligne
+      ``Profondeur de recherche : N`` si ``--depth`` est donné.
+
+    Attention au temps : expectimax à profondeur 2 met plus d'une minute et demie par
+    partie. Pour 1 000 parties, ``--depth 1`` est plus raisonnable.
+    """
+    _use_utf8_stdout()
+    if agent is None:
+        agent = list(AGENTS)
+
+    for name in agent:
+        _check_agent(name)
+
+    if depth is not None and not any(name in DEPTH_AGENTS for name in agent):
+        raise typer.BadParameter(
+            "aucun des agents choisis n'a de profondeur de recherche. "
+            f"Agents concernés : {', '.join(DEPTH_AGENTS)}.",
+            param_hint="--depth",
+        )
+    if output is not None and not output.parent.is_dir():
+        # Vérifié avant de jouer : on ne découvre pas une faute de frappe après des heures.
+        raise typer.BadParameter(
+            f"le dossier {str(output.parent)!r} n'existe pas.", param_hint="--output"
+        )
+
+    label = "Benchmark" + ("" if depth is None else f" (profondeur {depth})")
+    played: list[GameResult] = []
+
+    def show_info(_: GameResult | None) -> str | None:
+        return progress_info(played)
+
+    # Comme pour eval : la barre sur la sortie d'erreur, le tableau seul sur la sortie
+    # standard (gm2048 benchmark > benchmark.md ne récupère que le tableau).
+    with typer.progressbar(
+        length=games * len(agent),
+        label=label,
+        show_pos=True,
+        item_show_func=show_info,
+        file=sys.stderr,
+    ) as bar:
+
+        def on_game_done(result: GameResult) -> None:
+            played.append(result)
+            bar.current_item = result
+            bar.update(1)
+
+        evaluation_reports = run_benchmark(
+            agent_names=agent,
+            n_games=games,
+            first_seed=seed,
+            depth=depth,
+            on_game_done=on_game_done,
+        )
+
+    text = markdown_table(evaluation_reports)
+    if depth is not None:
+        # La ligne vide est indispensable : collé à une ligne de texte, un tableau
+        # Markdown n'est pas reconnu et s'affiche comme un seul paragraphe.
+        text = f"Profondeur de recherche : {depth}\n\n{text}"
+    if output is None:
+        typer.echo(text)
+    else:
+        output.write_text(text + "\n", encoding="utf-8")
+        typer.echo(f"Tableau écrit dans {output}", err=True)
+
+
+@app.command("train")
+def train_(
+    out: Annotated[
+        Path,
+        typer.Option(file_okay=False, help="Dossier de l'entraînement : poids, état et journal."),
+    ],
+    games: Annotated[
+        int | None,
+        typer.Option(
+            min=1,
+            help="Nombre total de parties (100 000 par défaut). Avec --resume, "
+            "prolonge l'entraînement jusqu'à ce total.",
+        ),
+    ] = None,
+    alpha: Annotated[float, typer.Option(help="Taux d'apprentissage.")] = 0.1,
+    seed: Annotated[int, typer.Option(help="Graine de la première partie.")] = 0,
+    checkpoint_every: Annotated[
+        int, typer.Option(min=1, help="Une sauvegarde toutes les N parties.")
+    ] = 5_000,
+    log_every: Annotated[
+        int, typer.Option(min=1, help="Une ligne de journal toutes les N parties.")
+    ] = 1_000,
+    resume: Annotated[
+        bool, typer.Option("--resume", help="Reprendre l'entraînement enregistré dans --out.")
+    ] = False,
+    plot: Annotated[
+        bool,
+        typer.Option(
+            "--plot",
+            help="Ouvrir aussi une fenêtre avec les courbes en direct (comme gm2048 plot).",
+        ),
+    ] = False,
+) -> None:
+    """Entraîner un réseau n-tuple par apprentissage TD."""
+    from collections import deque
+
+    from gm2048.training.loop import STATE_FILE, TrainingConfig, load_state
+    from gm2048.training.loop import resume as resume_training
+    from gm2048.training.loop import train as start_training
+
+    if resume:
+        if not (out / STATE_FILE).exists():
+            raise typer.BadParameter(
+                f"aucun entraînement à reprendre dans {str(out)!r}.", param_hint="--out"
+            )
+        config, done = load_state(out)
+        target = config.games if games is None else games
+        if target < done:
+            raise typer.BadParameter(
+                f"l'entraînement a déjà joué {done} parties.", param_hint="--games"
+            )
+    else:
+        if (out / STATE_FILE).exists():
+            raise typer.BadParameter(
+                f"{str(out)!r} contient déjà un entraînement : ajoute --resume pour le "
+                "reprendre, ou choisis un autre dossier.",
+                param_hint="--out",
+            )
+        try:
+            config = TrainingConfig(
+                games=100_000 if games is None else games,
+                alpha=alpha,
+                seed=seed,
+                checkpoint_every=checkpoint_every,
+                log_every=log_every,
+            )
+        except ValueError as error:
+            raise typer.BadParameter(str(error)) from error
+        done, target = 0, config.games
+
+    if plot:
+        open_plot_window(out)
+
+    recent: deque[int] = deque(maxlen=config.log_every)
+
+    def show_info(_: GameResult | None) -> str | None:
+        if not recent:
+            return None
+        return f"score moyen des {len(recent)} dernières parties : {sum(recent) / len(recent):.0f}"
+
+    with typer.progressbar(
+        length=target - done,
+        label="Entraînement",
+        show_pos=True,
+        item_show_func=show_info,
+        file=sys.stderr,
+    ) as bar:
+
+        def on_game_done(result: GameResult) -> None:
+            recent.append(result.score)
+            bar.current_item = result
+            bar.update(1)
+
+        if resume:
+            resume_training(out, games=games, on_game_done=on_game_done)
+        else:
+            start_training(config, out, on_game_done=on_game_done)
+
+    typer.echo(
+        f"{target} parties jouées. Poids : {out / 'weights.npz'}, journal : {out / 'log.csv'}"
+    )
+
+
+MATPLOTLIB_MISSING: Final = (
+    'les courbes ont besoin de matplotlib. Installe-le avec : pip install -e ".[gui]"'
+)
+
+
+def open_plot_window(out: Path) -> None:
+    """Lance ``gm2048 plot out`` dans un processus à part.
+
+    La fenêtre vit sa vie : elle relit le journal pendant que l'entraînement tourne, et
+    reste ouverte quand il se termine. Elle ne reçoit pas le Ctrl+C qui coupe
+    l'entraînement (nouveau groupe de processus sous Windows, nouvelle session
+    ailleurs), et sa sortie est jetée pour ne pas brouiller la barre de progression.
+    """
+    import subprocess
+
+    if importlib.util.find_spec("matplotlib") is None:
+        raise typer.BadParameter(MATPLOTLIB_MISSING, param_hint="--plot")
+    command = [sys.executable, "-m", "gm2048", "plot", str(out)]
+    quiet = subprocess.DEVNULL
+    if sys.platform == "win32":
+        subprocess.Popen(
+            command,
+            stdin=quiet,
+            stdout=quiet,
+            stderr=quiet,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    else:
+        subprocess.Popen(command, stdin=quiet, stdout=quiet, stderr=quiet, start_new_session=True)
+
+
+@app.command("plot")
+def plot_(
+    runs: Annotated[
+        list[Path],
+        typer.Argument(
+            file_okay=False,
+            help="Dossier(s) d'entraînement, par exemple runs/alpha-0.1. "
+            "Plusieurs dossiers : leurs courbes sont superposées.",
+        ),
+    ],
+    interval: Annotated[
+        float, typer.Option(min=0.2, help="Secondes entre deux relectures des journaux.")
+    ] = 2.0,
+) -> None:
+    """Afficher les courbes d'entraînements, mises à jour en direct.
+
+    Score moyen, meilleur score et part des parties qui atteignent chaque tuile.
+    La fenêtre relit log.csv régulièrement : elle suit un entraînement en cours.
+    """
+    try:
+        from gm2048.training.plot import show_training
+    except ModuleNotFoundError as error:
+        if error.name is None or not error.name.startswith("matplotlib"):
+            raise
+        typer.echo(f"Erreur : {MATPLOTLIB_MISSING}", err=True)
+        raise typer.Exit(1) from error
+    show_training(runs, interval)
